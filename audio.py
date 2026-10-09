@@ -4,6 +4,7 @@ Configuration lives in the application's state directory. No shell, system-wide
 ALSA rewrite or privileged service operation is used by this module.
 """
 import asyncio
+import array
 import contextlib
 import ctypes
 import ctypes.util
@@ -13,11 +14,15 @@ import math
 import os
 import re
 import shutil
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 
 SOFTWARE_CONTROL = 'Bureau Audio Master'
+SOURCE_GAIN_MAX = 4.0
+SOURCE_CONTROL_PREFIX = 'Bureau Audio Gain '
 SOFTWARE_GAIN_MAX = 4.0
 CARD_RE = re.compile(r'[A-Za-z0-9_-]{1,64}')
 PCM_RE = re.compile(r'[A-Za-z0-9_:,=.+-]{1,160}')
@@ -139,7 +144,7 @@ def hardware_diagnostics(text):
     for block in re.split(r'(?=^Simple mixer control )', text, flags=re.MULTILINE):
         name = re.match(r"Simple mixer control '(.+)',(\d+)", block)
         capabilities = re.search(r'^\s*Capabilities:\s*(.+)$', block, re.MULTILINE)
-        if not name or name[1] == SOFTWARE_CONTROL or not capabilities or 'pvolume' not in capabilities[1].split():
+        if not name or name[1] == SOFTWARE_CONTROL or name[1].startswith(SOURCE_CONTROL_PREFIX) or not capabilities or 'pvolume' not in capabilities[1].split():
             continue
         playback = '\n'.join(re.findall(r'^\s*[^\n]*:\s*Playback\b[^\n]*$', block, re.MULTILINE))
         percentages = re.findall(r'\[(\d+)%\]', playback)
@@ -166,7 +171,33 @@ def checked_settings(value, gain_max):
     return result
 
 
-def alsa_config(output):
+def checked_inputs(inputs):
+    if not isinstance(inputs, dict):
+        raise ValueError('Gains des sources invalides.')
+    result = {}
+    for address, gain in inputs.items():
+        if not isinstance(address, str) or not re.fullmatch(r'(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}', address):
+            raise ValueError('Adresse de source invalide.')
+        if isinstance(gain, bool) or not isinstance(gain, (int, float)) or not math.isfinite(gain) or not 0 <= gain <= SOURCE_GAIN_MAX:
+            raise ValueError('Gain de source attendu entre 0 et +4 dB.')
+        normalized = address.upper()
+        if normalized in result:
+            raise ValueError('Source en double.')
+        result[normalized] = float(gain)
+    return result
+
+
+def source_pcm(address):
+    checked_inputs({address: 0})
+    return 'bureau_input_' + address.replace(':', '').lower()
+
+
+def source_control(address):
+    checked_inputs({address: 0})
+    return SOURCE_CONTROL_PREFIX + address.replace(':', '').upper()
+
+
+def alsa_config(output, inputs=None, meter_card=None):
     """Render only validated values; leave the global ALSA configuration intact."""
     card, device = output['card'], output.get('device', 0)
     if not CARD_RE.fullmatch(card) or isinstance(device, bool) or not isinstance(device, int) or not 0 <= device <= 255:
@@ -174,6 +205,9 @@ def alsa_config(output):
     header = '</usr/share/alsa/alsa.conf>\n'
     if output['mode'] == 'existing':
         return header
+    if meter_card is not None and not CARD_RE.fullmatch(meter_card):
+        raise ValueError('Carte de mesure ALSA invalide.')
+    sink = f'hw:CARD={meter_card},DEV=0,SUBDEV=0' if meter_card else f'hw:CARD={card},DEV={device}'
     key = 0x420000 + int(hashlib.sha256(f'{card}:{device}'.encode()).hexdigest()[:5], 16)
     result = header + f'''pcm.bureau_mix {{
     type dmix
@@ -181,7 +215,7 @@ def alsa_config(output):
     ipc_key_add_uid true
     ipc_perm 0600
     slave {{
-        pcm "hw:CARD={card},DEV={device}"
+        pcm "{sink}"
         format S16_LE
         rate 48000
         channels 2
@@ -203,11 +237,93 @@ def alsa_config(output):
 }}
 '''
         slave = 'bureau_soft'
-    return result + f'pcm.bureau_audio {{ type plug; slave.pcm "{slave}"; }}\n'
+    result += f'pcm.bureau_audio {{ type plug; slave.pcm "{slave}"; }}\n'
+    for address in checked_inputs(inputs or {}):
+        # A separate control per Bluetooth source, ahead of the shared master.
+        # The outer plug converts the source format for the stereo gain stage.
+        name = source_pcm(address)
+        result += f'''pcm.{name}_gain {{
+    type softvol
+    slave.pcm "bureau_audio"
+    control {{ name "{source_control(address)}"; card "{card}"; count 1; }}
+    min_dB -0.1
+    max_dB {SOURCE_GAIN_MAX:.1f}
+    resolution 42
+}}
+pcm.{name} {{ type plug; slave.pcm "{name}_gain"; }}
+'''
+    return result
+
+
+def pcm_peaks(data):
+    """Stereo S16_LE peaks of the actual mixed frames sent to the output."""
+    samples = array.array('h')
+    samples.frombytes(data[:len(data) // 4 * 4])
+    if sys.byteorder != 'little':
+        samples.byteswap()
+    return [max((abs(v) for v in samples[channel::2]), default=0) / 32768 for channel in (0, 1)]
+
+
+class OutputMeter:
+    """Forward a loopback mix to the physical output and meter those same frames."""
+    def __init__(self, engine):
+        self.engine, self.processes, self.tasks = engine, [], []
+        self.peaks, self.updated, self.error = [0, 0], 0, ''
+
+    async def start(self, output, card):
+        common = ['-q', '-t', 'raw', '-f', 'S16_LE', '-c', '2', '-r', '48000',
+                  '--period-time=40000', '--buffer-time=200000']
+        env = self.engine.environment()
+        capture = await self.engine.spawn(executable('arecord'), '-D', f'hw:CARD={card},DEV=1,SUBDEV=0',
+                                         *common, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env)
+        self.processes.append(capture)
+        playback = await self.engine.spawn(executable('aplay'), '-D', f"hw:CARD={output['card']},DEV={output['device']}",
+                                          *common, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL,
+                                          stderr=asyncio.subprocess.PIPE, env=env)
+        self.processes.append(playback)
+        self.tasks = [asyncio.create_task(self.engine._read_stderr(p)) for p in self.processes]
+        self.tasks.append(asyncio.create_task(self.forward(capture, playback)))
+
+    async def forward(self, capture, playback):
+        try:
+            while True:
+                data = await capture.stdout.readexactly(7680)
+                playback.stdin.write(data)
+                await playback.stdin.drain()
+                self.peaks, self.updated = pcm_peaks(data), time.monotonic()
+        except (asyncio.IncompleteReadError, BrokenPipeError, ConnectionError, OSError) as exc:
+            self.error = 'La liaison de mesure audio est interrompue : ' + str(exc)
+
+    def running(self):
+        return bool(self.processes) and not self.error and all(p.returncode is None for p in self.processes)
+
+    def snapshot(self):
+        peaks = self.peaks if self.running() and time.monotonic() - self.updated < .3 else [0, 0]
+        return {'available': self.running(), 'left': peaks[0], 'right': peaks[1],
+                'clip_left': peaks[0] >= 32767 / 32768, 'clip_right': peaks[1] >= 32767 / 32768,
+                'demo': False, 'message': self.error}
+
+    async def stop(self):
+        for task in self.tasks:
+            task.cancel()
+        for task in self.tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        for process in self.processes:
+            if process.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), 3)
+            except asyncio.TimeoutError:
+                with contextlib.suppress(ProcessLookupError):
+                    process.kill()
+                await process.wait()
+        self.processes, self.tasks = [], []
 
 
 class AudioEngine:
-    """Own one playback process, its real output route, and that route's master."""
+    """Own source players, their output route, independent gains and master."""
     def __init__(self, state, runner=None, spawn=None, controls_provider=None):
         self.state = state
         self.directory = Path(state.dir) if hasattr(state, 'dir') else Path(state.path).parent
@@ -218,6 +334,9 @@ class AudioEngine:
         self.output_choices, self.output, self.control = [], None, None
         self.master = {'volume': 100, 'gain': 0, 'muted': False}
         self.process, self.reader_task = None, None
+        self.inputs, self.active_inputs = {}, {}
+        self.input_processes, self.input_reader_tasks = {}, []
+        self.meter, self.meter_card = None, None
         self.error, self.applied, self.stderr = '', False, ''
         self.master_known = False
         self.lock = asyncio.Lock()
@@ -234,7 +353,7 @@ class AudioEngine:
 
     async def discover(self):
         output = await self.command([executable('aplay'), '-l'])
-        choices, controls, diagnostics = parse_outputs(output), {}, {}
+        choices, controls, diagnostics = [v for v in parse_outputs(output) if v['card'] != 'Loopback'], {}, {}
         for choice in choices:
             card = choice['card']
             if card not in controls:
@@ -247,6 +366,7 @@ class AudioEngine:
                     items = fallback_controls(mixer_text)
                 diagnostics[card] = hardware_diagnostics(mixer_text)
                 items = [dict(item) for item in items if item.get('name') != SOFTWARE_CONTROL
+                         and not item.get('name', '').startswith(SOURCE_CONTROL_PREFIX)
                          and (item.get('has_switch') or (item.get('db_min') is not None and item['db_min'] < -90000))]
                 controls[card] = [{'name': SOFTWARE_CONTROL, 'index': 0, 'gain_max': SOFTWARE_GAIN_MAX,
                                    'has_switch': False, 'has_db': True, 'db_min': -60, 'software': True}, *items]
@@ -343,8 +463,9 @@ class AudioEngine:
             self.stderr = (self.stderr + chunk.decode(errors='replace'))[-4000:]
 
     async def _stop(self):
-        process, self.process = self.process, None
-        if process is not None:
+        processes = list(dict.fromkeys([process for process in [self.process, *self.input_processes.values()] if process is not None]))
+        self.process, self.input_processes = None, {}
+        for process in processes:
             if process.returncode is None:
                 with contextlib.suppress(ProcessLookupError):
                     process.terminate()
@@ -359,28 +480,69 @@ class AudioEngine:
             with contextlib.suppress(asyncio.CancelledError):
                 await self.reader_task
             self.reader_task = None
+        for task in self.input_reader_tasks:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        self.input_reader_tasks = []
+        if self.meter:
+            await self.meter.stop()
+            self.meter = None
 
-    async def _start(self, output):
-        pcm = output['pcm'] if output['mode'] == 'existing' else 'bureau_audio'
-        arguments = [executable('bluealsa-aplay'), '-D', pcm, '--volume=software',
-                     '--pcm-period-time=40000', '--pcm-buffer-time=200000']
+    async def _start(self, output, inputs=None):
         self.stderr = ''
-        process = await self.spawn(*arguments, stdin=asyncio.subprocess.DEVNULL,
-                                   stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
-                                   env=self.environment())
-        self.process = process
-        self.reader_task = asyncio.create_task(self._read_stderr(process))
+        if self.meter_card and output['mode'] == 'managed':
+            self.meter = OutputMeter(self)
+            await self.meter.start(output, self.meter_card)
+        streams = list((inputs or {}).items()) if output['mode'] == 'managed' else []
+        targets = [(address, source_pcm(address)) for address, _ in streams] or [(None, output['pcm'] if output['mode'] == 'existing' else 'bureau_audio')]
+        for address, pcm in targets:
+            arguments = [executable('bluealsa-aplay'), '-D', pcm, '--volume=software',
+                         '--pcm-period-time=40000', '--pcm-buffer-time=200000']
+            if address:
+                arguments.append(address)
+            process = await self.spawn(*arguments, stdin=asyncio.subprocess.DEVNULL,
+                                       stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+                                       env=self.environment())
+            task = asyncio.create_task(self._read_stderr(process))
+            if self.process is None:
+                self.process, self.reader_task = process, task
+            else:
+                self.input_reader_tasks.append(task)
+            if address:
+                self.input_processes[address] = process
         await asyncio.sleep(0.12)
-        if process.returncode is not None:
-            raise RuntimeError(f"Le lecteur audio s'est arrêté ({process.returncode}). {self.stderr.strip()[-800:]}")
+        if self.meter and not self.meter.running():
+            raise RuntimeError(self.meter.error or self.stderr or 'Mesure audio indisponible.')
+        for process in [self.process, *self.input_processes.values()]:
+            if process.returncode is not None:
+                raise RuntimeError(f"Le lecteur audio s'est arrêté ({process.returncode}). {self.stderr.strip()[-800:]}")
+
+    async def _apply_source_gain(self, address, gain, output):
+        await self.command([executable('amixer'), '-c', output['card'], '--', 'sset', source_control(address), f'{gain:.1f}dB'], env=self.environment())
+
+    async def configure_inputs(self, inputs):
+        self.inputs = checked_inputs(inputs)
+        if self.output and self.applied and self.output['mode'] == 'managed' and set(self.inputs) != set(self.active_inputs):
+            await self.configure(self.output, self.master)
+
+    async def set_source_gain(self, address, gain):
+        address, gain = next(iter(checked_inputs({address: gain}).items()))
+        async with self.lock:
+            if not self.source_gain_ready(address) or not self.output or self.output['mode'] != 'managed':
+                raise RuntimeError('Gain de source indisponible : configure une sortie gérée et active cette source.')
+            await self._apply_source_gain(address, gain, self.output)
+            self.inputs[address] = self.active_inputs[address] = gain
+        return gain
 
     async def configure(self, output, current_master=None):
         """Validate before interrupting audio; restore the old route if the probe fails."""
         async with self.lock:
             selected, control = await self.normalize(output)
+            inputs = dict(self.inputs) if selected['mode'] == 'managed' else {}
             route_keys = ('card', 'device', 'mode', 'pcm', 'control')
-            if self.applied and self.process is not None and self.process.returncode is None and self.output is not None \
-                    and all(self.output.get(key) == selected.get(key) for key in route_keys):
+            if self.snapshot()['applied'] and self.output is not None \
+                    and all(self.output.get(key) == selected.get(key) for key in route_keys) and set(inputs) == set(self.active_inputs):
                 if current_master is not None:
                     settings = checked_settings(current_master, control['gain_max'])
                     if settings != self.master:
@@ -395,10 +557,14 @@ class AudioEngine:
             if await self.external_player_active():
                 raise RuntimeError('bluealsa-aplay.service possède déjà la sortie. Termine la migration du lecteur avec le script d’installation avant de choisir une sortie dans l’interface.')
             previous_output, previous_control, previous_master = self.output, self.control, dict(self.master)
+            previous_inputs = dict(self.active_inputs)
+            previous_meter_card = self.meter_card
+            candidate = os.environ.get('BUREAU_METER_CARD', 'Loopback')
+            new_meter_card = candidate if selected['mode'] == 'managed' and CARD_RE.fullmatch(candidate) and candidate != selected['card'] and Path('/proc/asound', candidate, 'id').exists() else None
             previous_config = self.config_path.read_text() if self.config_path.exists() else None
             self.directory.mkdir(parents=True, exist_ok=True)
             temporary = self.config_path.with_suffix('.tmp')
-            temporary.write_text(alsa_config(selected))
+            temporary.write_text(alsa_config(selected, inputs, new_meter_card))
             temporary.chmod(0o600)
             temporary.replace(self.config_path)
             stopped = False
@@ -408,11 +574,23 @@ class AudioEngine:
                 self.applied = False
                 await self._stop()
                 stopped = True
+                self.meter_card = new_meter_card
+                if self.meter_card:
+                    await self.command([executable('aplay'), '-q', '-D', f"hw:CARD={selected['card']},DEV={selected['device']}",
+                                        '-t', 'raw', '-f', 'S16_LE', '-c', '2', '-r', '48000'],
+                                       input=b'\0' * 19200, env=self.environment())
                 pcm = selected['pcm'] if selected['mode'] == 'existing' else 'bureau_audio'
                 await self.command([executable('aplay'), '-q', '-D', pcm, '-t', 'raw', '-f', 'S16_LE',
                                     '-c', '2', '-r', '48000'], input=b'\0' * 19200, env=self.environment())
                 settings = await self._apply_master(settings, selected, control)
-                await self._start(selected)
+                for address, gain in inputs.items():
+                    # Opening silence creates the ALSA control before its
+                    # Bluetooth player starts, preventing a default-gain burst.
+                    await self.command([executable('aplay'), '-q', '-D', source_pcm(address), '-t', 'raw', '-f', 'S16_LE',
+                                        '-c', '2', '-r', '48000'], input=b'\0' * 19200, env=self.environment())
+                    await self._apply_source_gain(address, gain, selected)
+                await self._start(selected, inputs)
+                self.active_inputs = inputs
                 self.output, self.control, self.master = selected, control, settings
                 self.master_known = True
                 self.applied, self.error = True, ''
@@ -425,10 +603,14 @@ class AudioEngine:
                     self.config_path.chmod(0o600)
                 if stopped:
                     await self._stop()
+                    self.meter_card = previous_meter_card
                     if previous_output:
                         try:
                             await self._apply_master(previous_master, previous_output, previous_control)
-                            await self._start(previous_output)
+                            for address, gain in previous_inputs.items():
+                                await self._apply_source_gain(address, gain, previous_output)
+                            await self._start(previous_output, previous_inputs)
+                            self.active_inputs = previous_inputs
                             self.applied = True
                         except Exception as rollback_error:
                             self.applied = False
@@ -473,18 +655,35 @@ class AudioEngine:
             raise RuntimeError('Le contrôle audio ne fournit pas de niveau lisible.')
 
     async def poll(self):
-        if self.process is not None and self.process.returncode is not None:
+        if self.meter and not self.meter.running():
             self.applied = False
-            self.error = f"Le lecteur audio s'est arrêté ({self.process.returncode}). {self.stderr.strip()[-800:]}".strip()
+            self.error = self.meter.error or 'La liaison de mesure audio est interrompue.'
+        for address, process in [(None, self.process), *self.input_processes.items()]:
+            if process is not None and process.returncode is not None:
+                self.applied = False
+                source = f' ({address})' if address else ''
+                self.error = f"Le lecteur audio{source} s'est arrêté ({process.returncode}). {self.stderr.strip()[-800:]}".strip()
+                break
         return self.snapshot()
 
     def snapshot(self):
-        running = bool(self.process is not None and self.process.returncode is None)
+        running = bool(self.process is not None and self.process.returncode is None and all(process.returncode is None for process in self.input_processes.values()))
+        running = running and (self.meter is None or self.meter.running())
         return {'output': dict(self.output) if self.output else None, 'output_choices': self.output_choices,
                 'applied': self.applied and running, 'running': running,
                 'message': self.error or ('Lecteur audio prêt' if self.applied and running else 'Choisis une sortie audio'),
                 'gain_max': self.control['gain_max'] if self.control else 0,
                 'master': dict(self.master)}
+
+    def source_gain_ready(self, address):
+        return self.snapshot()['applied'] and address in self.active_inputs
+
+    def levels(self):
+        if self.meter:
+            return self.meter.snapshot()
+        return {'available': False, 'demo': False, 'left': 0, 'right': 0,
+                'clip_left': False, 'clip_right': False,
+                'message': 'La mesure stéréo nécessite la carte ALSA Loopback (snd-aloop) et une sortie gérée.'}
 
     async def close(self):
         async with self.lock:

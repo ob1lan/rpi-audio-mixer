@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#17191b">
+  <meta name="theme-color" content="#303231">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Bureau Audio">
   <title>Bureau Audio · Console</title>
@@ -14,7 +14,7 @@
 <body>
 <main>
   <header class="masthead">
-    <div class="brand"><div class="brand-mark" aria-hidden="true">ba<span>•</span></div><div><h1>BUREAU AUDIO</h1><p>CONSOLE BLUETOOTH STÉRÉO</p></div></div>
+    <div class="brand"><div class="brand-mark" aria-hidden="true">∿</div><div><h1>BUREAU AUDIO</h1><p>CONSOLE BLUETOOTH STÉRÉO</p></div></div>
     <span id="connection" class="status-pill">Connexion…</span>
   </header>
   <section id="login" class="login-panel" hidden>
@@ -27,8 +27,9 @@
   <div id="dashboard" hidden>
     <div id="demo-banner" class="banner" hidden>APERÇU SIMULÉ · Ces réglages ne contrôlent aucun appareil.</div>
     <div id="errors" class="error-box" role="status" hidden></div>
-    <details id="receivers-panel" class="receivers-panel">
-      <summary class="receivers-heading"><span id="receivers-title">Bluetooth et appareils</span><span id="receivers-status" class="small">Récepteurs</span></summary>
+    <div class="desk-toolbar"><span class="desk-model">BA / MIX <span>BLUETOOTH MIXING CONSOLE</span></span><div><button id="open-receivers" class="secondary" type="button" aria-haspopup="dialog">Bluetooth et appareils</button><button id="open-configuration" class="secondary" type="button" aria-haspopup="dialog">Sortie audio</button></div></div>
+    <dialog id="receivers-panel" class="settings-panel" aria-labelledby="receivers-title">
+      <header class="settings-heading"><div><h2 id="receivers-title">Bluetooth et appareils</h2><span id="receivers-status" class="small">Récepteurs</span></div><button class="dialog-close secondary" type="button" aria-label="Fermer les réglages Bluetooth">Fermer ×</button></header>
       <div id="receivers" class="receivers-grid"></div>
       <section class="source-management" aria-labelledby="sources-title">
         <h3 id="sources-title">Tes appareils</h3>
@@ -39,9 +40,9 @@
         <details id="retired-panel" class="retired-panel" hidden><summary>Appareils retirés <span id="retired-count"></span></summary><div id="retired-routes" class="route-list"></div></details>
       </section>
       <div class="desk-notes"><p>Les noms affichés sont les noms Bluetooth des appareils.<br>Les affectations restent mémorisées après redémarrage.</p><p id="gain-help"></p></div>
-    </details>
-    <details id="configuration-panel" class="receivers-panel configuration-panel">
-      <summary class="receivers-heading"><span>Configuration de la sortie</span><span id="configuration-status" class="small">Détection…</span></summary>
+    </dialog>
+    <dialog id="configuration-panel" class="settings-panel configuration-panel" aria-labelledby="configuration-title">
+      <header class="settings-heading"><div><h2 id="configuration-title">Configuration de la sortie</h2><span id="configuration-status" class="small">Détection…</span></div><button class="dialog-close secondary" type="button" aria-label="Fermer la configuration de sortie">Fermer ×</button></header>
       <div class="configuration-content">
         <p class="management-help">Choisis une sortie audio détectée sur ce Raspberry Pi. Un changement de sortie interrompt brièvement l’écoute. Ces réglages sont conservés après redémarrage.</p>
         <form id="output-form" class="output-form">
@@ -55,24 +56,32 @@
         <p id="output-audio-status" class="management-help" role="status"></p>
         <ul id="configuration-diagnostics" class="configuration-diagnostics"></ul>
       </div>
-    </details>
+    </dialog>
     <section class="console" aria-labelledby="console-title">
-      <div class="console-top"><div><span class="eyebrow">TOUS TES APPAREILS. UNE SEULE ÉCOUTE.</span><h2 id="console-title">Le mix du bureau<span class="console-version"> / 03.0</span></h2></div><div class="output-label"><span class="output-led" aria-hidden="true"></span><div><strong id="destination-name">SORTIE AUDIO</strong><span>SORTIE STÉRÉO · L / R</span></div></div></div>
+      <div class="console-top"><span class="screw" aria-hidden="true"></span><div class="console-title"><span class="eyebrow">WIRELESS STEREO MIXER</span><h2 id="console-title">BUREAU MIX<span class="console-version"> STÉRÉO</span></h2></div><div class="output-label"><div><strong id="destination-name">SORTIE AUDIO</strong><span>MAIN OUT · L / R</span></div></div><span class="screw" aria-hidden="true"></span></div>
+      <nav id="channel-navigation" class="channel-navigation" aria-label="Banques de sources" hidden><button id="bank-prev" class="bank-button" type="button" aria-label="Sources précédentes">←</button><span id="channel-page" role="status" aria-live="polite"></span><button id="bank-next" class="bank-button" type="button" aria-label="Sources suivantes">→</button></nav>
       <div class="console-rack">
         <div id="devices" class="channel-bank"></div>
         <article class="channel-strip master-strip">
-          <div class="strip-head"><span class="channel-number">L / R</span><span class="route-label">SORTIE</span></div>
+          <div class="input-patch" aria-hidden="true"><span>MAIN OUT</span><span>L <b>STEREO</b> R</span></div>
+          <div class="strip-head"><span class="channel-number">L / R</span><span class="route-label">L / R LIÉS</span></div>
+          <div class="master-panel">
+            <div class="master-trim trim-section">
+              <div id="master-gain-control"><div class="trim-label"><label for="master-gain">GAIN</label><output id="master-gain-value" for="master-gain">+0.0 dB</output></div><div class="knob-dial"><div id="gain-knob" class="knob" aria-hidden="true"><span></span></div><input id="master-gain" class="knob-input" type="range" min="0" max="4" step="0.1" value="0" aria-label="Gain général" title="Glisser vers le haut ou la droite pour augmenter le gain ; flèches du clavier pour ajuster."></div><div class="range-ends"><span>0 dB</span><span id="master-gain-max">+4 dB</span></div></div>
+              <p id="master-no-gain" class="small" hidden>Volume général<br>Sans gain positif</p>
+              <div class="strip-indicator"><span class="signal-led" id="master-led" aria-hidden="true"></span><span id="master-status">Sortie prête</span></div>
+              <div class="master-destination"><span id="master-destination-name">SORTIE AUDIO</span><span>STÉRÉO · L / R</span></div>
+            </div>
+            <div class="stereo-meter" id="stereo-meter" role="img" aria-label="Niveaux de sortie stéréo"><div class="meter-heading"><span>L</span><span>dBFS</span><span>R</span></div><div class="meter-row"><i class="meter-led red" data-channel="left" data-db="0"></i><span>CLIP</span><i class="meter-led red" data-channel="right" data-db="0"></i></div><div class="meter-row"><i class="meter-led red" data-channel="left" data-db="-1"></i><span>−1</span><i class="meter-led red" data-channel="right" data-db="-1"></i></div><div class="meter-row"><i class="meter-led amber" data-channel="left" data-db="-3"></i><span>−3</span><i class="meter-led amber" data-channel="right" data-db="-3"></i></div><div class="meter-row"><i class="meter-led amber" data-channel="left" data-db="-6"></i><span>−6</span><i class="meter-led amber" data-channel="right" data-db="-6"></i></div><div class="meter-row"><i class="meter-led green" data-channel="left" data-db="-9"></i><span>−9</span><i class="meter-led green" data-channel="right" data-db="-9"></i></div><div class="meter-row"><i class="meter-led green" data-channel="left" data-db="-12"></i><span>−12</span><i class="meter-led green" data-channel="right" data-db="-12"></i></div><div class="meter-row"><i class="meter-led green" data-channel="left" data-db="-15"></i><span>−15</span><i class="meter-led green" data-channel="right" data-db="-15"></i></div><div class="meter-row"><i class="meter-led green" data-channel="left" data-db="-18"></i><span>−18</span><i class="meter-led green" data-channel="right" data-db="-18"></i></div><div class="meter-row"><i class="meter-led green" data-channel="left" data-db="-24"></i><span>−24</span><i class="meter-led green" data-channel="right" data-db="-24"></i></div><div class="meter-row"><i class="meter-led green" data-channel="left" data-db="-30"></i><span>−30</span><i class="meter-led green" data-channel="right" data-db="-30"></i></div><div class="meter-row"><i class="meter-led green" data-channel="left" data-db="-36"></i><span>−36</span><i class="meter-led green" data-channel="right" data-db="-36"></i></div><div class="meter-row"><i class="meter-led green" data-channel="left" data-db="-48"></i><span>−48</span><i class="meter-led green" data-channel="right" data-db="-48"></i></div><span id="meter-status">Mesure inactive</span></div>
+          </div>
+          <div class="mute-control"><span class="mute-legend">MUTE</span><button id="master-mute" class="mute-button" type="button" aria-label="Couper le son général" aria-pressed="false"><span class="switch-triangle" aria-hidden="true"></span></button></div>
+          <div class="fader-section"><div class="fader-scale" aria-hidden="true"><span class="scale-unit">%</span><div class="scale-marks"><span>100</span><span>75</span><span>50</span><span>25</span><span>0</span></div></div><div class="fader-well"><span class="fader-channel" aria-hidden="true">L</span><label class="sr-only" for="master-volume">Volume général</label><span class="fader-cap" aria-hidden="true"></span><input id="master-volume" class="fader" type="range" min="0" max="100" step="1" value="0"></div><div class="fader-well"><span class="fader-channel" aria-hidden="true">R</span><label class="sr-only" for="master-volume-right">Volume général droit, lié au gauche</label><span class="fader-cap" aria-hidden="true"></span><input id="master-volume-right" class="fader" type="range" min="0" max="100" step="1" value="0"></div><div class="master-lamps"><span class="mute-led" aria-hidden="true"></span><span>MUTE</span></div></div>
+          <div class="level-readout"><output id="master-volume-value" for="master-volume master-volume-right">—</output><span>VOLUME STÉRÉO LIÉ</span></div>
           <div class="scribble"><h3>MASTER</h3><span>Tous les appareils</span></div>
-          <div class="trim-section master-trim"><div id="master-gain-control"><div class="trim-label"><label for="master-gain">GAIN GÉNÉRAL</label><output id="master-gain-value" for="master-gain">+0.0 dB</output></div><div class="gain-control"><div id="gain-knob" class="knob" aria-hidden="true"><span></span></div><div class="gain-track"><input id="master-gain" class="gain-range" type="range" min="0" max="4" step="0.1" value="0"><div class="range-ends"><span>0 dB</span><span id="master-gain-max">+4 dB</span></div></div></div></div><p id="master-no-gain" class="small" hidden>Volume général<br>Cette sortie ne propose pas de gain positif.</p></div>
-          <div class="strip-indicator"><span class="signal-led" id="master-led" aria-hidden="true"></span><span id="master-status">Sortie prête</span></div>
-          <div class="fader-section"><div class="fader-scale" aria-hidden="true"><span>100</span><span>75</span><span>50</span><span>25</span><span>0</span></div><div class="fader-well"><label class="sr-only" for="master-volume">Volume général</label><input id="master-volume" class="fader" type="range" min="0" max="100" step="1" value="0"></div></div>
-          <div class="level-readout"><output id="master-volume-value" for="master-volume">—</output><span>VOLUME GÉNÉRAL</span></div>
-          <div class="strip-actions"><button id="master-mute" class="mute-button" aria-label="Couper le son général">MUTE</button></div>
-          <div class="master-destination"><span id="master-destination-name">SORTIE AUDIO</span><span>STÉRÉO · L / R</span></div>
-          <div class="strip-footer">MASTER</div>
+          <div class="strip-footer">MAIN MIX</div>
         </article>
       </div>
-      <div class="console-bottom"><span class="screw" aria-hidden="true"></span><span>Les voyants indiquent un flux actif, sans mesure de son niveau sonore.</span><span class="screw" aria-hidden="true"></span></div>
+      <div class="console-bottom"><span class="screw" aria-hidden="true"></span><span class="console-notes"><span id="meter-note">MAIN MIX · NIVEAUX STÉRÉO</span></span><span class="screw" aria-hidden="true"></span></div>
     </section>
     <p id="empty-state" class="empty-state" hidden>Aucune source. Ouvre l’appairage sur le récepteur de ton choix pour ajouter un appareil.</p>
     <footer><span class="live-dot" aria-hidden="true"></span><span>Réglages actualisés automatiquement</span><span id="device-count" class="footer-right">—</span></footer>
@@ -80,15 +89,15 @@
   <div id="toast" class="toast" role="alert" hidden></div>
 </main>
 <template id="device-template">
-  <article class="channel-strip">
+  <article class="channel-strip source-strip">
+    <div class="input-patch"><span>BLUETOOTH IN</span><div class="source-format"><strong class="device-format"></strong><span class="device-detail"></span></div></div>
     <div class="strip-head"><span class="channel-number"></span><span class="route-label"></span></div>
+    <div class="trim-section source-trim"><div class="source-gain-control"><div class="trim-label"><label>GAIN</label><output class="device-gain-value">+0.0 dB</output></div><div class="knob-dial"><div class="knob source-knob" aria-hidden="true"><span></span></div><input class="knob-input device-gain" type="range" min="0" max="4" step="0.1" aria-label="Gain de la source" title="Glisser vers le haut ou la droite pour augmenter le gain ; flèches du clavier pour ajuster."></div><div class="range-ends"><span>0</span><span>+4 dB</span></div></div><p class="source-no-gain small" hidden>Gain indisponible</p></div>
+    <div class="mute-control"><span class="mute-legend">MUTE</span><button class="device-mute mute-button" type="button" aria-label="Couper le son de la source" aria-pressed="false"><span class="switch-triangle" aria-hidden="true"></span></button></div>
+    <div class="fader-section"><div class="fader-scale" aria-hidden="true"><span class="scale-unit">%</span><div class="scale-marks"><span>100</span><span>75</span><span>50</span><span>25</span><span>0</span></div></div><div class="fader-well"><label class="sr-only">Volume</label><span class="fader-cap" aria-hidden="true"></span><input class="fader device-volume" type="range" min="0" max="100" step="1"></div><div class="fader-side"><div class="lamp-row"><span class="mute-led" aria-hidden="true"></span><span>MUTE</span></div><div class="strip-indicator"><span class="signal-led" aria-hidden="true"></span><span class="signal-legend" aria-hidden="true">FLUX</span><span class="device-status sr-only"></span></div><div class="strip-actions"><button class="device-connect connection-button" type="button"><span class="switch-triangle" aria-hidden="true"></span><span class="connect-text sr-only">Reconnecter</span></button><span aria-hidden="true">LINK</span></div></div></div>
+    <div class="level-readout"><output></output><span>NIVEAU</span></div>
     <div class="scribble"><h3 class="device-name"></h3><span class="device-subtitle"></span></div>
-    <div class="trim-section source-format"><span class="eyebrow">ENTRÉE STÉRÉO</span><strong class="device-format"></strong><span class="device-detail"></span></div>
-    <div class="strip-indicator"><span class="signal-led" aria-hidden="true"></span><span class="device-status"></span></div>
-    <div class="fader-section"><div class="fader-scale" aria-hidden="true"><span>100</span><span>75</span><span>50</span><span>25</span><span>0</span></div><div class="fader-well"><label class="sr-only">Volume</label><input class="fader device-volume" type="range" min="0" max="100" step="1"></div></div>
-    <div class="level-readout"><output></output><span>NIVEAU DE LA SOURCE</span></div>
-    <div class="strip-actions"><button class="device-mute mute-button">MUTE</button><button class="device-connect connection-button">Reconnecter</button></div>
-    <div class="strip-footer"><span class="device-route-summary"></span></div>
+    <div class="strip-footer"><span class="footer-channel-number"></span><span class="device-route-summary"></span></div>
   </article>
 </template>
 <template id="receiver-template">

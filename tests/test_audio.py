@@ -1,13 +1,16 @@
 """Owned playback routing, mixer capability and rollback contracts without hardware."""
 import sys
+import asyncio
+import struct
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from audio import (AudioEngine, CommandResult, SOFTWARE_CONTROL, alsa_config,
-                   checked_settings, fallback_controls, hardware_diagnostics, parse_outputs)
+                   checked_inputs, pcm_peaks, OutputMeter, source_pcm, source_control, checked_settings, fallback_controls, hardware_diagnostics, parse_outputs)
 
 DEVICES = '''**** List of PLAYBACK Hardware Devices ****
 card 0: Headphones [bcm2835 Headphones], device 0: bcm2835 Headphones [bcm2835 Headphones]
@@ -125,6 +128,30 @@ Simple mixer control 'Bureau Audio Master',0
     def test_existing_pcm_does_not_rewrite_native_mixing(self):
         self.assertEqual(alsa_config({'card': 'Headphones', 'device': 0, 'mode': 'existing', 'control': 'PCM'}),
                          '</usr/share/alsa/alsa.conf>\n')
+
+    def test_independent_gain_config_has_valid_softvol_range(self):
+        address = 'AA:BB:CC:DD:EE:01'
+        text = alsa_config({'card': 'USB', 'device': 0, 'mode': 'managed', 'control': SOFTWARE_CONTROL}, {address: 2})
+        self.assertIn(source_pcm(address), text)
+        self.assertIn(source_control(address), text)
+        self.assertIn('min_dB -0.1', text)  # ALSA requires a negative minimum.
+        self.assertIn('resolution 42', text)  # 0..4 dB occupy the remaining 41 steps.
+        self.assertEqual(checked_inputs({address.lower(): 2}), {address: 2.0})
+        for value in [True, float('nan'), float('inf'), -1, 4.1, '2']:
+            with self.assertRaises(ValueError): checked_inputs({address: value})
+        with self.assertRaises(ValueError): checked_inputs({'address\"; type null': 0})
+
+    def test_loopback_is_a_mix_bus_and_physical_card_keeps_controls(self):
+        text = alsa_config({'card': 'USB', 'device': 0, 'mode': 'managed', 'control': SOFTWARE_CONTROL}, meter_card='Loopback')
+        self.assertIn('hw:CARD=Loopback,DEV=0,SUBDEV=0', text)
+        self.assertIn('card "USB"', text)
+        with self.assertRaises(ValueError):
+            alsa_config({'card': 'USB', 'mode': 'managed', 'control': SOFTWARE_CONTROL}, meter_card='bad"card')
+
+    def test_pcm_peaks_measure_channels_silence_and_full_scale(self):
+        self.assertEqual(pcm_peaks(b'\0' * 64), [0, 0])
+        self.assertEqual(pcm_peaks(struct.pack('<hhhh', -32768, 1024, 17, -16384)), [1, .5])
+        self.assertEqual(pcm_peaks(b''), [0, 0])
 
     def test_gain_and_mute_inputs_are_strict(self):
         with self.assertRaises(ValueError): checked_settings({'gain': 0.1}, 0)
@@ -295,6 +322,88 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.engine.process)
         self.assertFalse(self.engine.snapshot()['applied'])
         self.assertFalse(self.engine.config_path.exists())
+
+    async def test_channel_gain_players_are_filtered_and_independent(self):
+        first, second = 'AA:BB:CC:DD:EE:01', 'AA:BB:CC:DD:EE:02'
+        await self.engine.configure_inputs({first: 1.2, second: 0})
+        await self.engine.configure(self.usb)
+        self.assertEqual(len(self.spawn.calls), 2)
+        for address, call in zip([first, second], self.spawn.calls):
+            self.assertEqual(call[0][2], source_pcm(address))
+            self.assertEqual(call[0][-1], address)
+        master, process = dict(self.engine.master), self.engine.process
+        await self.engine.set_source_gain(first, 3.2)
+        self.assertEqual(self.engine.active_inputs, {first: 3.2, second: 0})
+        self.assertEqual(self.runner.calls[-1][0][-2:], [source_control(first), '3.2dB'])
+        self.assertEqual(self.engine.master, master)
+        self.assertIs(self.engine.process, process)
+        self.assertTrue(self.engine.source_gain_ready(first))
+        await self.engine.close()
+        self.assertTrue(all(p.terminated for p in self.spawn.processes))
+
+    async def test_failed_source_start_restores_all_players_and_gains(self):
+        first, second = 'AA:BB:CC:DD:EE:01', 'AA:BB:CC:DD:EE:02'
+        await self.engine.configure_inputs({first: 2, second: 1})
+        await self.engine.configure(self.usb)
+        self.spawn.fail_next = True
+        with self.assertRaises(RuntimeError):
+            await self.engine.configure({**self.usb, 'card': 'vc4hdmi0', 'pcm': 'plughw:CARD=vc4hdmi0,DEV=0'})
+        self.assertTrue(self.engine.snapshot()['applied'])
+        self.assertEqual(self.engine.output['card'], 'USB')
+        self.assertEqual(self.engine.active_inputs, {first: 2, second: 1})
+        self.assertEqual(len(self.engine.input_processes), 2)
+
+    async def test_gain_not_available_on_existing_route(self):
+        address = 'AA:BB:CC:DD:EE:01'
+        await self.engine.configure_inputs({address: 0})
+        await self.engine.configure(self.native)
+        self.assertFalse(self.engine.source_gain_ready(address))
+        with self.assertRaises(RuntimeError): await self.engine.set_source_gain(address, 1)
+        self.assertFalse(self.engine.levels()['available'])
+
+    async def test_loopback_bridge_routes_to_the_selected_physical_output(self):
+        exists = Path.exists
+        class Bridge:
+            error = ''
+            def __init__(self, engine): self.started = False
+            async def start(self, output, card): self.started, self.output, self.card = True, dict(output), card
+            def running(self): return self.started
+            async def stop(self): self.started = False
+            def snapshot(self): return {'available': self.started, 'left': 0, 'right': 0}
+        with patch('audio.Path.exists', lambda path: str(path) == '/proc/asound/Loopback/id' or exists(path)), patch('audio.OutputMeter', Bridge):
+            await self.engine.configure(self.usb)
+            self.assertIn('hw:CARD=Loopback,DEV=0,SUBDEV=0', self.engine.config_path.read_text())
+            bridge = self.engine.meter
+            self.assertEqual(bridge.output['card'], 'USB')
+            self.assertEqual(bridge.card, 'Loopback')
+            self.assertTrue(any('hw:CARD=USB,DEV=0' in call[0] for call in self.runner.calls))
+            self.assertTrue(self.engine.levels()['available'])
+            await self.engine.close()
+            self.assertFalse(bridge.started)
+
+    async def test_meter_forwards_exact_frames_and_clears_stale_readings(self):
+        reader = asyncio.StreamReader()
+        written = bytearray()
+        class Writer:
+            def write(self, data): written.extend(data)
+            async def drain(self): pass
+        meter = OutputMeter(self.engine)
+        meter.processes = [FakeProcess(), FakeProcess()]
+        task = asyncio.create_task(meter.forward(SimpleNamespace(stdout=reader), SimpleNamespace(stdin=Writer())))
+        packet = struct.pack('<hh', -32768, 16384) * 1920
+        reader.feed_data(packet)
+        await asyncio.sleep(.01)
+        self.assertEqual(bytes(written), packet)
+        result = meter.snapshot()
+        self.assertTrue(result['available'])
+        self.assertEqual([result['left'], result['right']], [1, .5])
+        self.assertTrue(result['clip_left'])
+        self.assertFalse(result['clip_right'])
+        meter.updated -= 1
+        self.assertEqual(meter.snapshot()['left'], 0)
+        reader.feed_eof()
+        await task
+        self.assertFalse(meter.snapshot()['available'])
 
     async def test_close_terminates_and_reaps_owned_player(self):
         await self.engine.configure(self.usb)

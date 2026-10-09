@@ -94,6 +94,11 @@ class FakeAudioEngine:
         self.choices = [{'card': 'TestAudio', 'name': 'Carte simulée', 'device': 0, 'pcm': 'hub_mix', 'mode': 'existing',
                          'controls': [{'name': 'PCM', 'gain_max': 4, 'has_switch': True, 'has_db': True}]}]
     async def discover(self): return copy.deepcopy(self.choices)
+    async def configure_inputs(self, inputs): self.inputs = dict(inputs)
+    def source_gain_ready(self, address): return self.output is not None and self.output.get('mode') == 'managed' and address in self.inputs
+    async def set_source_gain(self, address, gain):
+        if not self.source_gain_ready(address): raise RuntimeError('Gain indisponible.')
+        self.inputs[address] = gain
     async def configure(self, output, current_master=None):
         choice = next(v for v in self.choices if v['card'] == output['card'] and v['pcm'] == output['pcm'])
         limit = next(v['gain_max'] for v in choice['controls'] if v['name'] == output['control'])
@@ -610,6 +615,38 @@ class WebTests(unittest.IsolatedAsyncioTestCase):
         restored = DemoBackend(StateFile(self.tmp.name))
         self.assertEqual(restored.gain_max, 0)
         self.assertEqual(restored.output['label'], 'Bureau')
+
+    async def test_source_gain_is_independent_persistent_and_strict(self):
+        await self.login()
+        for invalid in [True, -1, 4.1, '2']:
+            self.assertEqual((await self.post('/api/device', {'address': PHONE, 'gain': invalid})).status, 400)
+        response = await self.post('/api/device', {'address': PHONE, 'gain': 2.3})
+        self.assertEqual(response.status, 200)
+        devices = (await response.json())['state']['devices']
+        self.assertEqual(devices[0]['gain'], 2.3)
+        self.assertEqual(devices[0]['volume'], 65)
+        self.assertEqual(devices[1]['gain'], 0)
+        self.assertEqual(DemoBackend(StateFile(self.tmp.name)).find(PHONE)['gain'], 2.3)
+        await self.post('/api/device', {'address': PHONE, 'action': 'disconnect'})
+        self.assertEqual((await self.post('/api/device', {'address': PHONE, 'gain': 1})).status, 200)
+        self.assertEqual(self.backend.find(PHONE)['volume'], None)
+        self.assertEqual((await self.post('/api/device', {'address': PHONE, 'gain': 2, 'typo': 3})).status, 400)
+
+    async def test_level_endpoint_authentication_and_master_mute(self):
+        self.assertEqual((await self.client.get('/api/levels')).status, 401)
+        await self.login()
+        response = await self.client.get('/api/levels')
+        self.assertEqual(response.status, 200)
+        data = await response.json()
+        self.assertTrue(data['demo'])
+        self.assertTrue(data['available'])
+        self.assertGreater(data['left'], 0)
+        self.assertGreater(data['right'], 0)
+        await self.post('/api/master', {'muted': True})
+        data = await (await self.client.get('/api/levels')).json()
+        self.assertEqual([data['left'], data['right']], [0, 0])
+        self.assertFalse(data['clip_left'])
+        self.assertFalse(data['clip_right'])
 
     async def test_receiver_name_update_preserves_device_name(self):
         await self.login()

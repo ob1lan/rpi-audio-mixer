@@ -19,7 +19,7 @@ from aiohttp import web
 from dbus_next import BusType, DBusError, Message, MessageType, Variant
 from dbus_next.aio import MessageBus
 from dbus_next.service import ServiceInterface, method
-from audio import AudioEngine
+from audio import AudioEngine, SOURCE_GAIN_MAX
 
 ROOT = Path(__file__).resolve().parent
 PROPERTIES = 'org.freedesktop.DBus.Properties'
@@ -176,7 +176,8 @@ class SourceRegistry:
                 if adapter not in self.specs:
                     self.specs[adapter] = {'address': adapter, 'label': 'Récepteur ' + adapter[-5:],
                                            'short_label': 'BT' + str(len(self.specs) + 1), 'alias': 'Bureau Audio ' + adapter[-5:]}
-                result[address] = {'address': address, 'adapter': adapter, 'kind': item.get('kind', 'computer')}
+                result[address] = {'address': address, 'adapter': adapter, 'kind': item.get('kind', 'computer'),
+                                   'gain': number(item.get('gain', 0), 0, SOURCE_GAIN_MAX)}
                 # Les anciens libellés personnalisés ne sont jamais réutilisés comme nom Bluetooth.
                 if isinstance(item.get('bluetooth_name'), str) and item['bluetooth_name'].strip():
                     result[address]['bluetooth_name'] = item['bluetooth_name']
@@ -550,6 +551,7 @@ class PiBackend(SourceRegistry):
     async def refresh_audio(self):
         self.output_diagnostics = []
         try:
+            await self.audio_engine.configure_inputs({a: v.get('gain', 0) for a, v in self.sources.items()})
             if not self.last_audio_discovery or time.monotonic() - self.last_audio_discovery > 15:
                 self.output_choices = await self.audio_engine.discover()
                 self.last_audio_discovery = time.monotonic()
@@ -633,6 +635,7 @@ class PiBackend(SourceRegistry):
             control = next(v for c in self.output_choices if c['card'] == requested['card'] and c['pcm'] == requested['pcm']
                            for v in c['controls'] if v['name'] == requested['control'])
             settings = {**self.master, 'gain': min(self.master['gain'], control.get('gain_max', 0))}
+            await self.audio_engine.configure_inputs({a: v.get('gain', 0) for a, v in self.sources.items()})
             result = await self.audio_engine.configure(requested, settings)
             self.output, self.master = result, await self.audio_engine.get_master()
             self.gain_max = result.get('gain_max', 0)
@@ -675,11 +678,21 @@ class PiBackend(SourceRegistry):
         return path
 
     async def set_device(self, address, changes):
+        address = bt_address(address)
         async with self.lock:
-            path = self.device_path(address)
-            matching = [(p, props) for p, props in self.pcms.items() if props.get('Device') == path]
-            if not matching:
-                raise ValueError('Flux audio indisponible. Lance une lecture puis réessaie.')
+            if address not in self.sources:
+                raise ValueError('Appareil inconnu.')
+            matching = []
+            if set(changes) & {'volume', 'muted'}:
+                path = self.device_path(address)
+                matching = [(p, props) for p, props in self.pcms.items() if props.get('Device') == path]
+                if not matching:
+                    raise ValueError('Flux audio indisponible. Lance une lecture puis réessaie.')
+            if 'gain' in changes:
+                gain = number(changes['gain'], 0, SOURCE_GAIN_MAX)
+                await self.audio_engine.set_source_gain(address, gain)
+                self.sources[address]['gain'] = gain
+                self.save_registry()
             for pcm_path, props in matching:
                 packed = encode_volume(props['Volume'], changes.get('volume'), changes.get('muted'))
                 await self.set_property('org.bluealsa', pcm_path, PCM, 'SoftVolume', 'b', True)
@@ -784,6 +797,8 @@ class PiBackend(SourceRegistry):
                             'receiver_present': bool(receiver), 'connected': bool(props.get('Connected')),
                             'paired': bool(props.get('Paired')), 'trusted': bool(props.get('Trusted')),
                             'connecting': address in self.connecting, 'volume': volume, 'muted': muted,
+                            'gain': spec.get('gain', 0), 'gain_max': SOURCE_GAIN_MAX if self.output and self.output.get('mode') == 'managed' else 0,
+                            'gain_ready': self.master_ready and self.audio_engine.source_gain_ready(address),
                             'playing': bool(stream and stream.get('Running')), 'codec': stream.get('Codec') if stream else None,
                             'channels': stream.get('Channels') if stream else None,
                             'sampling': stream.get('Rate', stream.get('Sampling')) if stream else None})
@@ -882,8 +897,14 @@ class DemoBackend(SourceRegistry):
 
     async def set_device(self, address, changes):
         device = self.find(address)
-        if not device or device['volume'] is None:
+        if not device or (device['volume'] is None and set(changes) & {'volume', 'muted'}):
             raise ValueError('Flux audio indisponible.')
+        if 'gain' in changes:
+            if not self.master_ready:
+                raise RuntimeError('Configure d’abord la sortie audio.')
+            gain = number(changes['gain'], 0, SOURCE_GAIN_MAX)
+            self.sources[device['address']]['gain'] = gain
+            self.save_registry()
         device.update(changes)
 
     async def device_action(self, address, action):
@@ -928,11 +949,26 @@ class DemoBackend(SourceRegistry):
         return {'demo': True, 'version': VERSION, 'bluetooth': True,
                 'adapters': [{**v, 'pairing_seconds': max(0, math.ceil(self.deadlines.get(v['address'], 0) - time.monotonic()))}
                              for v in self.adapters], 'master': dict(self.master), 'master_ready': self.master_ready,
-                'gain_max': self.gain_max, 'devices': [dict(v) for v in self.devices],
+                'gain_max': self.gain_max, 'devices': [{**v, 'gain': v.get('gain', 0), 'gain_max': SOURCE_GAIN_MAX,
+                                                      'gain_ready': self.master_ready} for v in self.devices],
                 'retired_devices': [{**v, 'name': self.source_name(a), 'connected': False} for a, v in self.retired.items()], 'errors': [],
                 'configuration': {'output': self.output, 'output_choices': self.output_choices, 'configured': self.master_ready,
                                   'diagnostics': [], 'audio_status': {'applied': self.master_ready,
                                   'message': 'Sortie simulée prête' if self.master_ready else 'Choisis une sortie audio.'}}}
+
+    def levels(self):
+        # Explicit demo waveform; production reads only measured PCM samples.
+        t = time.monotonic()
+        levels = [0.0, 0.0]
+        if self.master_ready and not self.master['muted']:
+            for i, device in enumerate(self.devices):
+                if device['playing'] and device['connected'] and not device['muted']:
+                    amplitude = (device['volume'] or 0) / 100 * 10 ** (device.get('gain', 0) / 20)
+                    for channel in (0, 1):
+                        levels[channel] += amplitude * (.15 + .28 * (1 + math.sin(t * (3.1 + i * .7) + channel * .8 + i)) / 2)
+            levels = [v * self.master['volume'] / 100 * 10 ** (self.master['gain'] / 20) for v in levels]
+        return {'available': self.master_ready, 'demo': True, 'left': min(1, levels[0]), 'right': min(1, levels[1]),
+                'clip_left': levels[0] >= 1, 'clip_right': levels[1] >= 1, 'message': 'Niveaux simulés'}
 
 
 def demo_config():
@@ -1003,6 +1039,9 @@ def create_app(backend, access_key):
     async def status(request):
         return web.json_response(backend.snapshot())
 
+    async def levels(request):
+        return web.json_response(backend.levels() if isinstance(backend, DemoBackend) else backend.audio_engine.levels())
+
     async def action(request):
         data = await request.json()
         if not isinstance(data, dict):
@@ -1042,11 +1081,15 @@ def create_app(backend, access_key):
             if command in ('connect', 'disconnect', 'trust'):
                 await backend.device_action(address, command)
             elif command == 'volume':
-                changes = {k: data[k] for k in ('volume', 'muted') if k in data}
+                if set(data) - {'address', 'action', 'volume', 'muted', 'gain'}:
+                    raise ValueError('Réglage de source inconnu.')
+                changes = {k: data[k] for k in ('volume', 'muted', 'gain') if k in data}
                 if not changes:
                     raise ValueError('Réglage absent.')
                 if 'volume' in changes:
                     number(changes['volume'], 0, 100)
+                if 'gain' in changes:
+                    number(changes['gain'], 0, SOURCE_GAIN_MAX)
                 if 'muted' in changes:
                     boolean(changes['muted'])
                 await backend.set_device(address, changes)
@@ -1066,6 +1109,7 @@ def create_app(backend, access_key):
     app.router.add_get('/health', health)
     app.router.add_post('/api/login', login)
     app.router.add_get('/api/status', status)
+    app.router.add_get('/api/levels', levels)
     app.router.add_post('/api/{section:master|pairing|device|radio|source|configuration}', action)
     app.router.add_static('/static/', ROOT / 'static', show_index=False)
 

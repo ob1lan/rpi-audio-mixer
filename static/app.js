@@ -5,30 +5,40 @@ const cards = new Map(), receivers = new Map(), writes = new Map(), actions = ne
 const routeRows = new Map();
 const dragging = new Set();
 let layoutFrame = null, outputDirty = false, outputFingerprint = "", savedOutputFingerprint = "", openedConfiguration = false;
+let channelBank = 0, bankCapacity = 1;
 
 function scheduleLayout() {
   if (layoutFrame !== null) return;
   layoutFrame = requestAnimationFrame(() => {
     layoutFrame = null;
     if ($("dashboard").hidden || dragging.size) return;
-    const strips = [...document.querySelectorAll(".console-rack .channel-strip")];
-    const rack = document.querySelector(".console-rack");
-    const mobile = window.matchMedia("(max-width: 759px)").matches;
-    if (!mobile && strips.length) {
-      const capacity = Math.max(4, Math.floor((rack.clientWidth - 32) / 220));
-      const rowCount = Math.ceil(strips.length / capacity);
-      rack.style.setProperty("--channel-columns", String(Math.ceil(strips.length / rowCount)));
-    }
-    const rows = new Set(strips.map(strip => Math.round(strip.getBoundingClientRect().top))).size;
-    if (!rows) return;
-    const current = $("master-volume").getBoundingClientRect().height;
-    const pageHeight = document.querySelector("main").getBoundingClientRect().height;
+    const desk = document.querySelector(".console"), deskStyle = getComputedStyle(desk);
     const viewport = window.visualViewport;
     const availableHeight = viewport && Math.abs(viewport.scale - 1) < .01 ? viewport.height : window.innerHeight;
-    // Garder une course utilisable ; les très petits écrans peuvent défiler.
-    const fitted = Math.floor((availableHeight - pageHeight + rows * current) / rows);
-    const next = Math.max(112, Math.min(mobile ? 300 : 600, fitted));
-    if (Math.abs(next - current) > 1) document.documentElement.style.setProperty("--fader-height", `${next}px`);
+    const sourceCards = [...$("devices").children];
+    const activeIndex = sourceCards.findIndex(card => card.contains(document.activeElement));
+    const navigation = $("channel-navigation");
+    // Bank by width, preserving the console's vertical faders on phones too.
+    const availableWidth = document.querySelector(".desk-toolbar").clientWidth;
+    const rails = parseFloat(deskStyle.borderLeftWidth) + parseFloat(deskStyle.borderRightWidth);
+    const masterWidth = parseFloat(deskStyle.getPropertyValue("--master-width"));
+    const sourceWidth = parseFloat(deskStyle.getPropertyValue("--strip-min-width"));
+    bankCapacity = Math.max(1, Math.min(8, Math.floor((availableWidth - rails - 10 - masterWidth) / sourceWidth)));
+    navigation.hidden = sourceCards.length <= bankCapacity;
+    const bankCount = Math.max(1, Math.ceil(sourceCards.length / bankCapacity));
+    channelBank = Math.max(0, Math.min(channelBank, bankCount - 1));
+    if (activeIndex >= 0) channelBank = Math.floor(activeIndex / bankCapacity);
+    const start = channelBank * bankCapacity;
+    sourceCards.forEach((card, index) => { card.hidden = index < start || index >= start + bankCapacity; });
+    desk.style.setProperty("--source-columns", String(Math.min(sourceCards.length - start, bankCapacity)));
+    desk.classList.toggle("no-sources", sourceCards.length === 0);
+    const current = $("master-volume").getBoundingClientRect().height;
+    const fitted = Math.floor(availableHeight - document.querySelector("main").getBoundingClientRect().height + current - 8);
+    const minimum = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--min-fader-height"));
+    document.documentElement.style.setProperty("--fader-height", `${Math.max(minimum, Math.min(260, fitted))}px`);
+    $("bank-prev").disabled = channelBank === 0;
+    $("bank-next").disabled = channelBank === bankCount - 1;
+    $("channel-page").textContent = sourceCards.length ? `Sources ${start + 1}–${Math.min(start + bankCapacity, sourceCards.length)} / ${sourceCards.length} · Banque ${channelBank + 1}/${bankCount}` : "Aucune source";
   });
 }
 
@@ -37,12 +47,20 @@ window.visualViewport?.addEventListener("resize", scheduleLayout);
 function endDrag(event) { dragging.delete(event.pointerId); scheduleLayout(); }
 window.addEventListener("pointerup", endDrag);
 window.addEventListener("pointercancel", endDrag);
-try { $("receivers-panel").open = localStorage.getItem("bureau-receivers-open") === "true"; } catch {}
-$("receivers-panel").addEventListener("toggle", () => {
-  try { localStorage.setItem("bureau-receivers-open", String($("receivers-panel").open)); } catch {}
-  scheduleLayout();
+$("bank-prev").addEventListener("click", () => { channelBank--; scheduleLayout(); });
+$("bank-next").addEventListener("click", () => { channelBank++; scheduleLayout(); });
+for (const [panelId, buttonId] of [["receivers-panel", "open-receivers"], ["configuration-panel", "open-configuration"]]) {
+  const panel = $(panelId);
+  $(buttonId).addEventListener("click", () => panel.showModal());
+  panel.querySelector(".dialog-close").addEventListener("click", () => panel.close());
+  panel.addEventListener("click", event => { if (event.target === panel) {
+    const rect = panel.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) panel.close();
+  } });
+}
+window.addEventListener("keydown", event => {
+  if (event.key === "Escape") dragging.clear();
 });
-$("configuration-panel").addEventListener("toggle", scheduleLayout);
 
 function toast(message) {
   $("toast").textContent = message;
@@ -56,6 +74,7 @@ async function api(path, body) {
   });
   if (response.status === 401) {
     authenticated = false;
+    for (const panel of document.querySelectorAll(".settings-panel[open]")) panel.close();
     $("login").hidden = false;
     $("dashboard").hidden = true;
     $("connection").textContent = "Connexion requise";
@@ -69,11 +88,28 @@ async function api(path, body) {
   return data;
 }
 function progress(slider) {
-  if (slider.id === "master-gain") $("gain-knob").style.setProperty("--rotation", `${-120 + Number(slider.value) / Math.max(.1, Number(slider.max)) * 240}deg`);
+  if (slider.classList.contains("fader")) {
+    const minimum = Number(slider.min), span = Number(slider.max) - minimum;
+    slider.closest(".fader-well").style.setProperty("--level", String(span > 0 ? (Number(slider.value) - minimum) / span : 0));
+  }
+  if (slider.id === "master-gain") $("gain-knob").style.setProperty("--rotation", `${-135 + Number(slider.value) / Math.max(.1, Number(slider.max)) * 270}deg`);
+  else {
+    const card = slider.closest(".channel-strip");
+    if (slider.classList.contains("device-gain")) {
+      card.querySelector(".source-knob").style.setProperty("--rotation", `${-135 + Number(slider.value) / Math.max(.1, Number(slider.max)) * 270}deg`);
+    }
+    if (slider.id === "master-volume" || slider.id === "master-volume-right") {
+      const other = $(slider.id === "master-volume" ? "master-volume-right" : "master-volume");
+      other.value = slider.value;
+      other.setAttribute("aria-valuetext", `${slider.value} %`);
+      other.closest(".fader-well").style.setProperty("--level", String(Number(slider.value) / 100));
+    }
+  }
 }
 function isBusy(key, slider) {
   const write = writes.get(key);
-  return document.activeElement === slider || !!(write && (write.pending || write.running));
+  const activeControl = document.activeElement;
+  return activeControl === slider || (key === "master" && [$("master-volume"), $("master-volume-right")].includes(activeControl)) || !!(write && (write.pending || write.running));
 }
 function range(slider, output, value, key, suffix=" %") {
   if (!isBusy(key, slider)) slider.value = value ?? 0;
@@ -113,6 +149,30 @@ function sliderEvents(slider, output, key, path, getBody, suffix=" %") {
   slider.addEventListener("change", () => flush(key, path));
   slider.addEventListener("blur", () => { if (state && authenticated) render(state); });
 }
+function rotaryEvents(slider) {
+  slider.addEventListener("pointerdown", event => {
+    if (slider.disabled || event.button !== 0) return;
+    event.preventDefault();
+    slider.focus({preventScroll:true});
+    slider.setPointerCapture(event.pointerId);
+    const initial = Number(slider.value), x = event.clientX, y = event.clientY;
+    const span = Number(slider.max) - Number(slider.min), step = Number(slider.step) || 1;
+    const move = pointer => {
+      const raw = initial + ((y - pointer.clientY) + (pointer.clientX - x) * .5) * span / 150;
+      slider.value = String(Math.max(Number(slider.min), Math.min(Number(slider.max), Math.round(raw / step) * step)));
+      slider.dispatchEvent(new Event("input", {bubbles:true}));
+    };
+    const end = () => {
+      slider.removeEventListener("pointermove", move);
+      slider.removeEventListener("pointerup", end);
+      slider.removeEventListener("pointercancel", end);
+      slider.dispatchEvent(new Event("change", {bubbles:true}));
+    };
+    slider.addEventListener("pointermove", move);
+    slider.addEventListener("pointerup", end);
+    slider.addEventListener("pointercancel", end);
+  });
+}
 async function immediate(button, path, body, key, onSuccess = () => {}) {
   if (actions.has(key)) return;
   actions.add(key);
@@ -124,12 +184,18 @@ async function immediate(button, path, body, key, onSuccess = () => {}) {
 }
 function makeCard(device) {
   const card = $("device-template").content.firstElementChild.cloneNode(true);
-  const slider = card.querySelector("input"), label = card.querySelector("label"), output = card.querySelector("output");
+  const slider = card.querySelector(".device-volume"), knob = card.querySelector(".device-gain"), label = card.querySelector(".fader-well label"), output = card.querySelector(".level-readout output");
   slider.id = `volume-${device.address.replaceAll(":", "")}`;
   slider.setAttribute("aria-label", `Volume de ${device.name}`);
   label.htmlFor = slider.id;
   output.htmlFor = slider.id;
   sliderEvents(slider, output, device.address, "/api/device", volume => ({address:device.address, volume}));
+  knob.id = `gain-${device.address.replaceAll(":", "")}`;
+  card.querySelector(".trim-label label").htmlFor = knob.id;
+  const gainOutput = card.querySelector(".device-gain-value");
+  gainOutput.htmlFor = knob.id;
+  sliderEvents(knob, gainOutput, device.address, "/api/device", gain => ({address:device.address, gain}), " dB");
+  rotaryEvents(knob);
   card.querySelector(".device-mute").addEventListener("click", () => {
     const current = state.devices.find(d => d.address === device.address);
     sendQueued(device.address, "/api/device", {address:device.address, muted:!current.muted});
@@ -137,7 +203,7 @@ function makeCard(device) {
   });
   card.querySelector(".device-connect").addEventListener("click", event => {
     const current = state.devices.find(d => d.address === device.address);
-    immediate(event.target, "/api/device", {address:device.address, action:current.connected ? "disconnect" : "connect"}, device.address);
+    immediate(event.currentTarget, "/api/device", {address:device.address, action:current.connected ? "disconnect" : "connect"}, device.address);
   });
   cards.set(device.address, card);
   return card;
@@ -219,7 +285,7 @@ function renderConfiguration(data) {
     li.textContent = typeof item === "string" ? item : (item.message || String(item));
     return li;
   }));
-  if (!config.configured && !openedConfiguration) { $("configuration-panel").open = true; openedConfiguration = true; }
+  if (!config.configured && !openedConfiguration) { $("configuration-panel").showModal(); openedConfiguration = true; }
   const destination = config.output?.label || "SORTIE AUDIO";
   $("destination-name").textContent = destination;
   $("destination-name").title = destination;
@@ -310,9 +376,11 @@ function render(data) {
   $("gain-help").textContent = gainMax > 0
     ? `Le gain général va jusqu’à +${gainMax.toLocaleString("fr-FR")} dB. Si le son sature, réduis le gain ou les volumes des sources.`
     : "Cette sortie ne propose pas de gain positif. Les volumes des sources et le volume général restent indépendants.";
+  if (data.devices.some(device => !device.gain_max)) $("gain-help").textContent += " Pour le gain par source, choisis une sortie gérée dans la configuration audio.";
   range($("master-volume"), $("master-volume-value"), data.master.volume, "master");
+  range($("master-volume-right"), $("master-volume-value"), data.master.volume, "master");
   range($("master-gain"), $("master-gain-value"), data.master.gain, "master", " dB");
-  $("master-volume").disabled = $("master-mute").disabled = !data.master_ready;
+  $("master-volume").disabled = $("master-volume-right").disabled = $("master-mute").disabled = !data.master_ready;
   $("master-gain").disabled = !data.master_ready || gainMax === 0;
   $("master-mute").classList.toggle("is-muted", data.master.muted);
   $("master-mute").setAttribute("aria-label", data.master.muted ? "Rétablir le son général" : "Couper le son général");
@@ -354,6 +422,7 @@ function render(data) {
     // Ne pas déplacer un fader actif : le navigateur doit conserver le focus.
     if (!card.parentNode) $("devices").append(card);
     card.querySelector(".channel-number").textContent = String(index + 1).padStart(2,"0");
+    card.querySelector(".footer-channel-number").textContent = String(index + 1);
     card.querySelector(".route-label").textContent = device.receiver;
     card.querySelector(".device-name").textContent = device.name;
     card.querySelector(".device-name").title = device.remote_name;
@@ -364,21 +433,30 @@ function render(data) {
     const status = card.querySelector(".device-status");
     status.textContent = pending ? "Connexion en cours…" : (!device.receiver_present ? "Récepteur absent" : (!device.paired ? "À appairer" : (device.connected ? (device.playing ? "Flux actif" : "Connecté") : "Déconnecté")));
     status.title = status.textContent;
+    card.querySelector(".strip-indicator").title = status.textContent;
     card.querySelector(".signal-led").classList.toggle("active", device.playing);
     const sample = device.sampling ? `${(device.sampling / 1000).toLocaleString("fr-FR", {maximumFractionDigits:1})} kHz` : "";
     card.querySelector(".device-format").textContent = device.codec ? `${device.codec}${sample ? " / " + sample : ""}` : "EN ATTENTE";
     card.querySelector(".device-detail").textContent = device.codec ? (device.channels === 2 ? "Deux canaux · L / R" : `${device.channels} canal`) : (!device.paired ? `Appairer sur ${device.receiver}` : (device.connected ? "Lance une lecture" : "Prêt à se reconnecter"));
     card.querySelector(".device-detail").title = card.querySelector(".device-detail").textContent;
     card.querySelector(".device-format").title = card.querySelector(".device-format").textContent;
-    const slider = card.querySelector("input"), mute = card.querySelector(".device-mute"), connect = card.querySelector(".device-connect");
+    const slider = card.querySelector(".device-volume"), knob = card.querySelector(".device-gain"), mute = card.querySelector(".device-mute"), connect = card.querySelector(".device-connect");
     slider.setAttribute("aria-label", `Volume de ${device.name}`);
-    card.querySelector("label").textContent = `Volume de ${device.name}`;
-    range(slider, card.querySelector("output"), device.volume, device.address);
+    knob.setAttribute("aria-label", `Gain de ${device.name}`);
+    knob.max = String(device.gain_max || 0);
+    card.querySelector(".source-gain-control").hidden = !device.gain_max;
+    card.querySelector(".source-no-gain").hidden = !!device.gain_max;
+    card.querySelector(".fader-well label").textContent = `Volume de ${device.name}`;
+    range(slider, card.querySelector(".level-readout output"), device.volume, device.address);
+    range(knob, card.querySelector(".device-gain-value"), device.gain ?? 0, device.address, " dB");
     slider.disabled = mute.disabled = device.volume === null;
+    knob.disabled = !device.gain_ready;
     mute.classList.toggle("is-muted", device.muted);
     mute.setAttribute("aria-pressed", String(device.muted));
     mute.setAttribute("aria-label", `${device.muted ? "Rétablir" : "Couper"} le son de ${device.name}`);
-    connect.textContent = pending ? "Connexion…" : (device.connected ? "Déconnecter" : "Reconnecter");
+    card.querySelector(".connect-text").textContent = pending ? "Connexion…" : (device.connected ? "Déconnecter" : "Reconnecter");
+    connect.title = card.querySelector(".connect-text").textContent;
+    connect.classList.toggle("is-connected", device.connected);
     connect.disabled = pending || !device.receiver_present || !device.paired || !receiver?.powered;
     connect.setAttribute("aria-label", `${device.connected ? "Déconnecter" : "Reconnecter"} ${device.name}`);
   });
@@ -407,7 +485,9 @@ $("output-form").addEventListener("submit", event => {
   }}, "configuration", () => { outputDirty = false; outputFingerprint = ""; });
 });
 sliderEvents($("master-volume"), $("master-volume-value"), "master", "/api/master", volume => ({volume}));
+sliderEvents($("master-volume-right"), $("master-volume-value"), "master", "/api/master", volume => ({volume}));
 sliderEvents($("master-gain"), $("master-gain-value"), "master", "/api/master", gain => ({gain}), " dB");
+rotaryEvents($("master-gain"));
 $("master-mute").addEventListener("click", () => {
   sendQueued("master", "/api/master", {muted:!state.master.muted});
   flush("master", "/api/master");
@@ -428,3 +508,38 @@ async function poll() {
 }
 poll();
 setInterval(() => { if (authenticated) poll(); }, 2000);
+
+let meterData = null, meterFetched = 0, meterPolling = false;
+const heldPeak = {left:-100, right:-100}, heldUntil = {left:0, right:0}, clipUntil = {left:0, right:0};
+async function pollLevels() {
+  if (!authenticated || document.hidden || meterPolling) return;
+  meterPolling = true;
+  try { meterData = await api("/api/levels"); meterFetched = performance.now(); }
+  catch { meterData = null; }
+  finally { meterPolling = false; }
+}
+function paintMeter() {
+  const now = performance.now(), fresh = Boolean(meterData?.available && now - meterFetched < 600);
+  const db = {};
+  for (const channel of ["left", "right"]) {
+    const amplitude = fresh ? Math.max(0, Math.min(1, Number(meterData[channel]) || 0)) : 0;
+    db[channel] = amplitude > 0 ? 20 * Math.log10(amplitude) : -100;
+    if (fresh && meterData[`clip_${channel}`]) clipUntil[channel] = now + 1000;
+    if (!fresh) { heldPeak[channel] = -100; clipUntil[channel] = 0; }
+    else if (db[channel] >= heldPeak[channel] || now > heldUntil[channel]) {
+      heldPeak[channel] = db[channel]; heldUntil[channel] = now + 650;
+    }
+  }
+  for (const led of $("stereo-meter").querySelectorAll(".meter-led")) {
+    const channel = led.dataset.channel, threshold = Number(led.dataset.db);
+    const hold = heldPeak[channel] >= threshold && heldPeak[channel] < threshold + (threshold < -18 ? 6 : 3);
+    led.classList.toggle("lit", threshold === 0 ? fresh && now < clipUntil[channel] : fresh && (db[channel] >= threshold || hold));
+  }
+  $("meter-status").textContent = fresh ? (meterData.demo ? "SIMULÉ" : "MAIN MIX") : "INACTIF";
+  $("stereo-meter").setAttribute("aria-label", fresh ? `Niveaux de sortie ${meterData.demo ? "simulés " : ""}: gauche ${db.left > -90 ? db.left.toFixed(0) + " dBFS" : "silence"}, droite ${db.right > -90 ? db.right.toFixed(0) + " dBFS" : "silence"}${now < clipUntil.left || now < clipUntil.right ? ", écrêtage" : ""}` : "Mesure des niveaux de sortie indisponible");
+  $("meter-note").textContent = fresh ? (meterData.demo ? "NIVEAUX SIMULÉS · APERÇU" : "MAIN MIX · CRÊTES NUMÉRIQUES L / R") : (meterData?.message || "MAIN MIX · MESURE INACTIVE");
+  $("meter-note").title = meterData?.message || "";
+}
+setInterval(pollLevels, 100);
+setInterval(paintMeter, 50);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) pollLevels(); });

@@ -48,7 +48,7 @@ Le code d’accès, les appairages, les affectations, les noms Bluetooth, les ap
 
 **Le lecteur audio change de propriétaire : une brève interruption est attendue.** Le service web lance désormais le lecteur pour appliquer réellement les changements de sortie. Le script sauvegarde code, préférences, unité web et état immédiat du lecteur. Si le serveur ne démarre pas, il restaure la version précédente. `/health` confirme la version web, pas la réception ni l’écoute effective : vérifie les flux après la migration.
 
-Les fichiers ALSA globaux ne sont pas réécrits. Les sauvegardes restent dans `/var/backups/bureau-audio`. Recharge la page et saisis le code habituel. `update-ui.sh` remplace uniquement la présentation d’un serveur déjà en 3.0.
+Les fichiers ALSA globaux ne sont pas réécrits. Les sauvegardes restent dans `/var/backups/bureau-audio`. Recharge la page et saisis le code habituel. Pour remplacer uniquement la présentation d’un serveur déjà en 3.0, suis les instructions de la section **Sources et interface**.
 
 ## Sources et interface
 
@@ -58,19 +58,35 @@ Les affectations persistent après redémarrage. Les adresses des récepteurs le
 
 **Retirer** masque et déconnecte une source, en conservant son appairage. **Rétablir** la réactive sur le récepteur choisi. Une nouvelle source ou un remplacement de téléphone ne nécessite aucune modification du code.
 
-Le volume par source agit sur son flux BlueALSA stéréo. Lance une lecture si son fader est indisponible. MASTER agit sur le contrôle choisi pour la sortie, avec le gain permis par celui-ci. Les voyants indiquent un flux actif sans mesurer son niveau : il peut transporter du silence.
+Le volume par source agit sur son flux BlueALSA stéréo. Lance une lecture si son fader est indisponible. MASTER agit sur le contrôle choisi pour la sortie, avec le gain permis par celui-ci. Les petits voyants des sources indiquent un flux actif : il peut transporter du silence. Le vumètre MASTER mesure séparément les crêtes numériques gauche et droite quand ALSA Loopback est disponible.
 
-Les bandeaux réservent deux lignes au nom et une au récepteur. Les hauteurs fixes empêchent les noms longs de déplacer les faders et MUTE. Sur mobile, deux tranches par rangée et MASTER en tête. Le nombre de rangées et la longueur des faders s’adaptent à l’espace disponible.
+La présentation reprend le style du [Behringer XENYX X2222USB](https://www.behringer.com/en/products/0601-ADA) pour les seules commandes effectives : panneaux graphite, surface inférieure argentée, capuchons de faders noirs pour les sources et clairs pour MAIN MIX. Les poussoirs MUTE noirs à triangle ont un voyant ambré à droite de la glissière. Le voyant vert FLUX indique un flux actif, sans mesurer son niveau individuel. Les deux colonnes de voyants ronds du vumètre sont placées à droite, au-dessus des faders généraux liés. Aucun bouton EQ, AUX, FX ou BAL décoratif ni fausse prise ne figure dans la console.
+
+GAIN, MUTE, LINK et les faders commandent les fonctions audio existantes. Les graduations des faders restent en pourcentage et celles du vumètre en dBFS. Les gains de source vont de 0 à +4 dB, indépendamment des faders. Fais glisser un bouton GAIN vers le haut ou vers la droite pour augmenter sa valeur ; les flèches du clavier fonctionnent également. LINK déconnecte ou reconnecte la source ; son infobulle précise l’action. Les deux faders MAIN MIX règlent le même volume stéréo et portent la mention « L / R LIÉS ».
+
+Les noms sont inscrits sous les faders et disposent de deux lignes. Les sources et MAIN MIX conservent leurs faders verticaux sur téléphone. Les flèches de banque donnent accès aux autres sources, tandis que MAIN MIX reste visible à droite. La longueur des glissières et le nombre de tranches visibles s’adaptent à la fenêtre. Une fenêtre très basse peut nécessiter un défilement vertical. Bluetooth et la configuration de sortie s’ouvrent dans des fenêtres dédiées, défilantes, qui se ferment avec **Fermer**, Échap ou un clic à l’extérieur.
+
+La révision audio ajoute des commandes côté serveur. Pour un serveur 3.0 existant, sauvegarde `/opt/bureau-audio` et les préférences, puis remplace `app.py`, `audio.py` et les quatre fichiers `static/index.html`, `static/style.css`, `static/app.js`, `static/knob-scale.svg`. Redémarre `sudo systemctl restart bureau-audio` puis recharge complètement la page. Une brève interruption audio est attendue. Si la révision audio est déjà installée et que tu remplaces uniquement la présentation, les quatre fichiers statiques suffisent et aucun redémarrage audio n’est nécessaire. Le SVG contient les graduations des boutons rotatifs. Le fichier `upgrade.sh` cité plus haut est absent de ce checkout : ne lance pas `install.sh` comme remplacement d’une mise à jour.
+
+Pour activer les niveaux réels sur un Pi utilisant une sortie **gérée** :
+
+```sh
+sudo modprobe snd-aloop
+printf '%s\n' snd-aloop | sudo tee /etc/modules-load.d/bureau-audio-meter.conf
+sudo systemctl restart bureau-audio
+```
+
+Le serveur détecte la carte `Loopback` et dirige le mélange vers elle, puis transfère les mêmes échantillons stéréo à la sortie physique. Les deux colonnes de 12 LED montrent les crêtes en dBFS : vert, orange près du maximum, rouge à l’écrêtage. Une crête reste visible environ 650 ms ; CLIP reste allumé une seconde. Les mesures sont transmises dix fois par seconde et s’éteignent en cas de données périmées. Le transfert ajoute des tampons et peut augmenter la latence ; sa fluidité reste à valider sur le Pi. Les mesures précèdent le DAC et tout réglage analogique matériel ; elles ne mesurent pas le niveau acoustique. Sans Loopback ou avec une ancienne route personnalisée, le vumètre indique **INACTIF** et l’écoute conserve sa route directe. `BUREAU_METER_CARD=off` dans l’environnement du service désactive ce transfert ; redémarre le service après modification. L’aperçu local est explicitement **SIMULÉ**, sans capture du son de l’ordinateur.
 
 ## Audio et limites
 
-Pour une nouvelle sortie, le moteur crée une configuration ALSA privée : conversion `plug`, volume commun `softvol` si choisi, puis mélange `dmix`. La sortie matérielle est testée en **stéréo S16_LE, 48 kHz**, avec périodes de 40 ms et cinq périodes de tampon. Une carte incompatible échoue avec un diagnostic. Un changement raté restaure la sortie précédente.
+Pour une nouvelle sortie, le moteur crée une configuration ALSA privée : conversion `plug`, gain `softvol` par source, volume commun `softvol` si choisi, puis mélange `dmix`. Chaque lecteur BlueALSA est filtré par adresse Bluetooth. Le gain des sources est mémorisé, y compris après retrait et rétablissement. Une ancienne route personnalisée conserve son lecteur unique et ne propose pas de gain par source. La sortie matérielle est testée en **stéréo S16_LE, 48 kHz**, avec périodes de 40 ms et cinq périodes de tampon. Une carte incompatible échoue avec un diagnostic. Un changement raté restaure la sortie précédente.
 
 Changer de destination interrompt brièvement le lecteur ; renommer la même destination ne le redémarre pas. Le gain matériel dépend du maximum dB déclaré par ALSA ; les contrôles sans mute utilisable ne sont pas proposés. Le volume logiciel reste disponible sur une sortie sans contrôle physique.
 
 Le volume logiciel ne modifie pas les contrôles matériels de la carte. Si l’un d’eux est observé muet ou à zéro, un diagnostic le signale : il peut bloquer l’écoute, selon son lien avec la sortie choisie. Vérifie ce contrôle ou sélectionne-le comme contrôle de volume ; l’application n’ouvre pas arbitrairement toutes les sorties de la carte.
 
-Le gain positif et la somme de sources fortes peuvent saturer : réduis les faders si tu entends une distorsion. Aucun limiteur ou vumètre audio n’est intégré. La fluidité, le nombre de flux et la latence dépendent des radios et des sources. Plusieurs récepteurs permettent de répartir les flux, sans garantir un nombre illimité de lectures simultanées. Une console de jeu sans sortie A2DP nécessite une entrée ou un émetteur séparé.
+Le gain positif et la somme de sources fortes peuvent saturer : réduis les faders si tu entends une distorsion. Aucun limiteur n’est intégré. Le vumètre nécessite la carte Loopback ; l’ajout ou le retrait d’une source régénère les étages de gain et relance brièvement les lecteurs. La fluidité, le nombre de flux et la latence dépendent des radios et des sources. Plusieurs récepteurs permettent de répartir les flux, sans garantir un nombre illimité de lectures simultanées. Une console de jeu sans sortie A2DP nécessite une entrée ou un émetteur séparé.
 
 ## Données de chaque installation
 
@@ -105,7 +121,7 @@ node --check static/app.js
 for script in *.sh; do bash -n "$script"; done
 ```
 
-Les tests couvrent les contrats D-Bus, les deux formats de volume, les routes dynamiques, les accès web, le lecteur, ses échecs et la migration avec retour arrière. Les radios, cartes et commandes sont simulées. La version 3.0 a également été inspectée dans le navigateur sur ordinateur et mobile. Sa validation sonore reste à effectuer sur le matériel cible.
+Les tests couvrent les contrats D-Bus, les deux formats de volume, les routes dynamiques, les accès web, le lecteur, ses échecs et la migration avec retour arrière. Les radios, cartes et commandes sont simulées. Une précédente présentation a été inspectée dans le navigateur sur ordinateur et mobile. Cette révision est vérifiée par tests Python et DOM ; sa validation visuelle complète et sa validation sonore restent à effectuer sur le matériel cible.
 
 ## Diagnostic et désinstallation
 
@@ -121,5 +137,7 @@ Pour désinstaller, garde les récepteurs branchés puis lance `sudo bash uninst
 
 - [BlueZ : propriétés des appareils](https://github.com/bluez/bluez/blob/master/doc/org.bluez.Device.rst).
 - [API PCM BlueALSA 4.3.1](https://github.com/arkq/bluez-alsa/blob/v4.3.1/doc/org.bluealsa.PCM1.7.rst) et [API actuelle](https://github.com/arkq/bluez-alsa/blob/master/doc/org.bluealsa.PCM1.7.rst).
+- [Référence visuelle XENYX X2222USB](https://www.behringer.com/en/products/0601-ADA).
+- [ALSA Loopback](https://www.alsa-project.org/wiki/Matrix:Module-aloop).
 - [ALSA dmix](https://github.com/alsa-project/alsa-lib/blob/master/src/pcm/pcm_dmix.c) et [softvol](https://github.com/alsa-project/alsa-lib/blob/master/src/pcm/pcm_softvol.c).
 - [GitHub Actions checkout](https://github.com/actions/checkout) et [setup-python](https://github.com/actions/setup-python).
