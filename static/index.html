@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#17191b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Bureau Audio">
+  <title>Bureau Audio · Console</title>
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<main>
+  <header class="masthead">
+    <div class="brand"><div class="brand-mark" aria-hidden="true">ba<span>•</span></div><div><h1>BUREAU AUDIO</h1><p>CONSOLE BLUETOOTH STÉRÉO</p></div></div>
+    <span id="connection" class="status-pill">Connexion…</span>
+  </header>
+  <section id="login" class="login-panel" hidden>
+    <span class="eyebrow">TA CONSOLE, À PORTÉE DE MAIN</span>
+    <h2>Ouvrir la console.</h2>
+    <p>Entre ton code d’accès pour retrouver tes appareils et tes réglages.</p>
+    <form id="login-form"><label for="access-key">Code d’accès</label><div class="login-fields"><input id="access-key" type="password" autocomplete="current-password" required><button class="primary" type="submit">Ouvrir</button></div></form>
+    <p id="login-error" role="alert" class="error-text"></p>
+  </section>
+  <div id="dashboard" hidden>
+    <div id="demo-banner" class="banner" hidden>APERÇU SIMULÉ · Ces réglages ne contrôlent aucun appareil.</div>
+    <div id="errors" class="error-box" role="status" hidden></div>
+    <details id="receivers-panel" class="receivers-panel">
+      <summary class="receivers-heading"><span id="receivers-title">Bluetooth et appareils</span><span id="receivers-status" class="small">Récepteurs</span></summary>
+      <div id="receivers" class="receivers-grid"></div>
+      <section class="source-management" aria-labelledby="sources-title">
+        <h3 id="sources-title">Tes appareils</h3>
+        <p class="management-help">Pour ajouter un appareil, ouvre « Appairer » sur le récepteur souhaité, puis sélectionne son nom dans les réglages Bluetooth de l’appareil. Sa tranche apparaît automatiquement.</p>
+        <div id="source-routes" class="route-list"></div>
+        <p id="route-empty" class="small" hidden>Aucun appareil enregistré.</p>
+        <p class="management-help">Changer de récepteur déconnecte l’ancien lien. Si nécessaire, appaire ensuite l’appareil sur le nouveau récepteur. « Retirer » le déconnecte et le masque ; tu peux le rétablir ici.</p>
+        <details id="retired-panel" class="retired-panel" hidden><summary>Appareils retirés <span id="retired-count"></span></summary><div id="retired-routes" class="route-list"></div></details>
+      </section>
+      <div class="desk-notes"><p>Les noms affichés sont les noms Bluetooth des appareils.<br>Les affectations restent mémorisées après redémarrage.</p><p id="gain-help"></p></div>
+    </details>
+    <details id="configuration-panel" class="receivers-panel configuration-panel">
+      <summary class="receivers-heading"><span>Configuration de la sortie</span><span id="configuration-status" class="small">Détection…</span></summary>
+      <div class="configuration-content">
+        <p class="management-help">Choisis une sortie audio détectée sur ce Raspberry Pi. Un changement de sortie interrompt brièvement l’écoute. Ces réglages sont conservés après redémarrage.</p>
+        <form id="output-form" class="output-form">
+          <label>Carte audio<select id="output-card" required></select></label>
+          <label>Sortie audio<select id="output-pcm" required></select></label>
+          <label>Contrôle de volume<select id="output-control"></select></label>
+          <label>Nom de la destination<input id="output-name" maxlength="100" autocomplete="off" placeholder="Ma sortie audio"></label>
+          <p id="output-capabilities" class="small"></p>
+          <button id="output-save" class="primary" type="submit">Appliquer la sortie</button>
+        </form>
+        <p id="output-audio-status" class="management-help" role="status"></p>
+        <ul id="configuration-diagnostics" class="configuration-diagnostics"></ul>
+      </div>
+    </details>
+    <section class="console" aria-labelledby="console-title">
+      <div class="console-top"><div><span class="eyebrow">TOUS TES APPAREILS. UNE SEULE ÉCOUTE.</span><h2 id="console-title">Le mix du bureau<span class="console-version"> / 03.0</span></h2></div><div class="output-label"><span class="output-led" aria-hidden="true"></span><div><strong id="destination-name">SORTIE AUDIO</strong><span>SORTIE STÉRÉO · L / R</span></div></div></div>
+      <div class="console-rack">
+        <div id="devices" class="channel-bank"></div>
+        <article class="channel-strip master-strip">
+          <div class="strip-head"><span class="channel-number">L / R</span><span class="route-label">SORTIE</span></div>
+          <div class="scribble"><h3>MASTER</h3><span>Tous les appareils</span></div>
+          <div class="trim-section master-trim"><div id="master-gain-control"><div class="trim-label"><label for="master-gain">GAIN GÉNÉRAL</label><output id="master-gain-value" for="master-gain">+0.0 dB</output></div><div class="gain-control"><div id="gain-knob" class="knob" aria-hidden="true"><span></span></div><div class="gain-track"><input id="master-gain" class="gain-range" type="range" min="0" max="4" step="0.1" value="0"><div class="range-ends"><span>0 dB</span><span id="master-gain-max">+4 dB</span></div></div></div></div><p id="master-no-gain" class="small" hidden>Volume général<br>Cette sortie ne propose pas de gain positif.</p></div>
+          <div class="strip-indicator"><span class="signal-led" id="master-led" aria-hidden="true"></span><span id="master-status">Sortie prête</span></div>
+          <div class="fader-section"><div class="fader-scale" aria-hidden="true"><span>100</span><span>75</span><span>50</span><span>25</span><span>0</span></div><div class="fader-well"><label class="sr-only" for="master-volume">Volume général</label><input id="master-volume" class="fader" type="range" min="0" max="100" step="1" value="0"></div></div>
+          <div class="level-readout"><output id="master-volume-value" for="master-volume">—</output><span>VOLUME GÉNÉRAL</span></div>
+          <div class="strip-actions"><button id="master-mute" class="mute-button" aria-label="Couper le son général">MUTE</button></div>
+          <div class="master-destination"><span id="master-destination-name">SORTIE AUDIO</span><span>STÉRÉO · L / R</span></div>
+          <div class="strip-footer">MASTER</div>
+        </article>
+      </div>
+      <div class="console-bottom"><span class="screw" aria-hidden="true"></span><span>Les voyants indiquent un flux actif, sans mesure de son niveau sonore.</span><span class="screw" aria-hidden="true"></span></div>
+    </section>
+    <p id="empty-state" class="empty-state" hidden>Aucune source. Ouvre l’appairage sur le récepteur de ton choix pour ajouter un appareil.</p>
+    <footer><span class="live-dot" aria-hidden="true"></span><span>Réglages actualisés automatiquement</span><span id="device-count" class="footer-right">—</span></footer>
+  </div>
+  <div id="toast" class="toast" role="alert" hidden></div>
+</main>
+<template id="device-template">
+  <article class="channel-strip">
+    <div class="strip-head"><span class="channel-number"></span><span class="route-label"></span></div>
+    <div class="scribble"><h3 class="device-name"></h3><span class="device-subtitle"></span></div>
+    <div class="trim-section source-format"><span class="eyebrow">ENTRÉE STÉRÉO</span><strong class="device-format"></strong><span class="device-detail"></span></div>
+    <div class="strip-indicator"><span class="signal-led" aria-hidden="true"></span><span class="device-status"></span></div>
+    <div class="fader-section"><div class="fader-scale" aria-hidden="true"><span>100</span><span>75</span><span>50</span><span>25</span><span>0</span></div><div class="fader-well"><label class="sr-only">Volume</label><input class="fader device-volume" type="range" min="0" max="100" step="1"></div></div>
+    <div class="level-readout"><output></output><span>NIVEAU DE LA SOURCE</span></div>
+    <div class="strip-actions"><button class="device-mute mute-button">MUTE</button><button class="device-connect connection-button">Reconnecter</button></div>
+    <div class="strip-footer"><span class="device-route-summary"></span></div>
+  </article>
+</template>
+<template id="receiver-template">
+  <article class="receiver-card">
+    <div class="receiver-title"><span class="receiver-badge"></span><div><h3 class="receiver-name"></h3><p class="receiver-sources"></p></div><span class="receiver-status"></span></div>
+    <div class="receiver-bottom"><span class="receiver-alias"></span><div class="receiver-actions"><button class="radio-button secondary" hidden>Activer</button><button class="pair-button secondary">Appairer</button></div></div>
+    <form class="receiver-rename"><label>Nom visible en Bluetooth<input class="receiver-alias-input" maxlength="64" autocomplete="off" required></label><button class="receiver-alias-save secondary" type="submit">Renommer</button></form>
+    <p class="pairing-countdown small" aria-live="polite"></p>
+  </article>
+</template>
+<template id="route-template">
+  <div class="source-route">
+    <div class="route-identity"><strong class="source-name"></strong><span class="source-address"></span><span class="source-route-state"></span></div>
+    <label class="route-select-label"><span>Récepteur</span><select class="source-adapter"></select></label>
+    <button class="source-apply secondary">Appliquer</button>
+    <button class="source-retire secondary">Retirer</button>
+  </div>
+</template>
+</body>
+</html>

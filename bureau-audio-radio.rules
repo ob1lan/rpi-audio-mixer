@@ -1,0 +1,9 @@
+// Seule l'activation de ce service fixe est autorisée à l'interface.
+polkit.addRule(function(action, subject) {
+    if (action.id === "org.freedesktop.systemd1.manage-units" &&
+        subject.user === "bureau-audio" &&
+        action.lookup("unit") === "bureau-audio-radio.service" &&
+        action.lookup("verb") === "restart") {
+        return polkit.Result.YES;
+    }
+});

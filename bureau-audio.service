@@ -1,0 +1,27 @@
+[Unit]
+Description=Bureau Audio - hub audio stereo et commandes web
+Wants=bluetooth.service
+After=bluetooth.service bluealsa.service bluealsad.service bureau-audio-bluealsa.service sound.target
+
+[Service]
+Type=simple
+User=bureau-audio
+Group=bureau-audio
+SupplementaryGroups=audio
+WorkingDirectory=/opt/bureau-audio
+EnvironmentFile=/etc/bureau-audio.env
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStartPre=+/usr/sbin/rfkill unblock bluetooth
+ExecStart=/usr/bin/python3 /opt/bureau-audio/app.py
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/bureau-audio
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

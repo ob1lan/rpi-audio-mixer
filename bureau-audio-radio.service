@@ -1,0 +1,11 @@
+[Unit]
+Description=Bureau Audio - debloquer les radios Bluetooth
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/usr/sbin/rfkill unblock bluetooth
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
