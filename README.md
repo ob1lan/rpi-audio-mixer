@@ -9,28 +9,58 @@ Téléphone / ordinateurs → récepteurs Bluetooth du Pi → BlueALSA
 
 Pour des écouteurs sans fil, branche un émetteur Bluetooth à la sortie du Pi. L’application ne gère pas la transmission Bluetooth sortante ni le micro.
 
-Le paquet ne contient aucune adresse Bluetooth, source ou carte audio imposée. Leur détection et leur sélection se font dans la page web. Il peut servir sur d’autres Pi sous Debian / Raspberry Pi OS avec systemd ; la compatibilité sonore avec toutes les radios et cartes n’est pas garantie par les tests simulés.
+Le paquet ne contient aucune adresse Bluetooth, source ou carte audio imposée. La détection est automatique ; la sortie peut être choisie dans le terminal à l’installation ou dans la page web. Il peut servir sur d’autres Pi sous Debian / Raspberry Pi OS avec systemd ; la compatibilité sonore avec toutes les radios et cartes n’est pas garantie par les tests simulés.
 
 ## Installation
 
 Prérequis : Python 3.9+, BlueZ, ALSA et BlueALSA avec `bluealsa-aplay`, un récepteur Bluetooth A2DP et une sortie ALSA stéréo. Une carte USB peut remplacer le jack absent de certains modèles. L’application accepte les formats de volume BlueALSA `uint16` et tableau d’octets, ainsi que les propriétés `Sampling` et `Rate`.
 
-Le lecteur doit proposer `--volume=software` (notamment BlueALSA 4.3.1 et les versions actuelles). Le BlueALSA 4.0 de certains systèmes Bookworm doit être mis à jour avant cette installation. Les scripts vérifient cette capacité avant le transfert du lecteur ; ils ne remplacent pas une version compilée déjà installée. Les [options du lecteur 4.3.1](https://github.com/arkq/bluez-alsa/blob/v4.3.1/doc/bluealsa-aplay.1.rst) décrivent ce mode.
+### Une seule commande
+
+Quand ces fichiers sont publiés sur `main` et que le dépôt est public, colle cette commande dans le terminal du Pi :
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ob1lan/rpi-audio-mixer/main/bootstrap.sh | sh
+```
+
+Le lanceur télécharge un instantané complet du dépôt, vérifie l’archive, puis demande `sudo` et exécute l’installation et la configuration. Il installe les dépendances, configure les services au démarrage, débloque les radios Bluetooth par logiciel, active les récepteurs internes et USB détectés et charge `snd-aloop` pour le vumètre, y compris aux prochains démarrages. Si une seule sortie audio existe, elle est sélectionnée ; sinon, choisis son numéro dans le terminal. Le volume logiciel réel **Bureau Audio Master** est sélectionné. L’adresse web et le code d’accès sont affichés à la fin. L’archive temporaire est supprimée.
+
+Une nouvelle exécution met à jour l’application en conservant code d’accès, appairages, sorties et volumes. Une ancienne route ALSA personnalisée reste conservée. Un défaut matériel, une radio toujours bloquée ou une sortie inutilisable est signalé avec un code de sortie d’échec ; le service installé reste disponible pour terminer la configuration. `rfkill` ne peut pas lever un blocage matériel ni réactiver un contrôleur absent / désactivé dans le firmware.
+
+Pour une installation sans question, donne l’identifiant ALSA et le numéro du périphérique (exemple à adapter à ta carte) :
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ob1lan/rpi-audio-mixer/main/bootstrap.sh | sh -s -- --non-interactive --output Headphones:0
+```
+
+Sans sortie déjà enregistrée et avec plusieurs destinations possibles, `--non-interactive` exige `--output` et affiche les identifiants disponibles. Il ne choisit pas une carte arbitraire. `--repo OWNER/REPO` et `--ref BRANCH_OU_TAG` permettent de télécharger un autre dépôt ou une version déterminée ; ils précèdent les options de configuration.
+
+Pour un **dépôt privé**, exporte `GH_TOKEN` avec un jeton GitHub autorisé à lire le contenu du dépôt, puis utilise l’API authentifiée pour télécharger le lanceur :
+
+```sh
+read -rsp 'GitHub token: ' GH_TOKEN; printf '\n'; export GH_TOKEN
+printf 'header = "Authorization: Bearer %s"\nheader = "Accept: application/vnd.github.raw+json"\n' "$GH_TOKEN" | curl --config - -fsSL 'https://api.github.com/repos/ob1lan/rpi-audio-mixer/contents/bootstrap.sh?ref=main' | sh
+unset GH_TOKEN
+```
+
+Le jeton ne figure pas dans les arguments de `curl`, n’est pas enregistré et n’est pas transmis à l’installation privilégiée. Le dépôt doit contenir `bootstrap.sh` avant d’utiliser ces commandes.
+
+Le lecteur doit proposer `--volume=software`. L’installation automatique conserve un lecteur compatible existant. Sinon, elle compile [BlueALSA 4.3.1](https://github.com/arkq/bluez-alsa/blob/v4.3.1/INSTALL.md), avec le codec SBC, dans `/opt/bureau-audio-tools/bluealsa-4.3.1`, à partir d’une archive dont le SHA-256 est vérifié. Les binaires Debian et les versions compilées par l’utilisateur ne sont pas écrasés. Cette compilation peut prendre plusieurs minutes sur un Pi. Les [options du lecteur 4.3.1](https://github.com/arkq/bluez-alsa/blob/v4.3.1/doc/bluealsa-aplay.1.rst) décrivent le volume logiciel.
 
 Depuis le dossier du projet copié sur le Pi :
 
 ```sh
-sudo bash install.sh
+sudo bash install.sh --configure
 ```
 
-Le script installe les dépendances Debian disponibles et conserve une installation BlueALSA existante. Il affiche l’adresse `http://NOM-DU-PI.local:8088` et le code d’accès propre à cette installation.
+La même configuration automatique est disponible depuis un clone local. `sudo bash install.sh` sans `--configure` conserve le parcours manuel et exige un lecteur compatible déjà disponible. Pour reprendre une configuration interrompue : `sudo python3 /opt/bureau-audio/configure.py`.
 
-1. Ouvre **Configuration de la sortie**, choisis la carte, la sortie et le contrôle de volume, puis **Appliquer la sortie**. Le contrôle logiciel **Bureau Audio Master** est proposé en premier : volume, MUTE et gain jusqu’à +4 dB.
+1. Pour modifier la sortie choisie à l’installation, ouvre **Configuration de la sortie**, choisis la carte, la sortie et le contrôle de volume, puis **Appliquer la sortie**. Le contrôle logiciel **Bureau Audio Master** propose volume, MUTE et gain jusqu’à +4 dB.
 2. Dans **Bluetooth et appareils**, renomme les récepteurs si nécessaire : c’est le nom visible depuis les sources.
 3. Clique sur **Appairer** sur le récepteur souhaité. Pendant trois minutes, sélectionne ce récepteur dans les réglages Bluetooth du téléphone ou de l’ordinateur.
 4. Sélectionne-le comme sortie son sur cet appareil et lance une lecture. Sa tranche apparaît automatiquement.
 
-Sans daemon BlueALSA actif, l’installation crée son service de réception A2DP. Un daemon actif est conservé. L’application gère le lecteur `bluealsa-aplay` : un ancien service de lecture standard est arrêté et désactivé, avec son état sauvegardé pour la désinstallation.
+Sans daemon BlueALSA actif, l’installation crée son service de réception A2DP sur tous les contrôleurs, sans liste d’adresses imposée. Un daemon actif est conservé ; avec `--configure`, son unité standard `bluealsa.service` ou `bluealsad.service` est activée au démarrage si elle était désactivée. Cet état est sauvegardé pour la désinstallation. L’application gère le lecteur `bluealsa-aplay` : un ancien service de lecture standard est arrêté et désactivé, avec son état sauvegardé pour la désinstallation.
 
 Un daemon préexistant doit exposer `org.bluealsa`, accepter A2DP sink sur les récepteurs utilisés et démarrer automatiquement avec le Pi. Un lecteur lancé manuellement ou sous une autre unité doit être arrêté avant de choisir une sortie.
 
@@ -41,7 +71,7 @@ L’installation nécessite root. Ensuite, l’interface et le lecteur fonctionn
 Copie le nouveau dossier sur le Pi puis lance :
 
 ```sh
-sudo bash upgrade.sh
+sudo bash upgrade.sh --configure
 ```
 
 Le code d’accès, les appairages, les affectations, les noms Bluetooth, les appareils retirés et les volumes sont conservés. Une ancienne route ALSA personnalisée est conservée quand `BUREAU_CARD` est présent ; `BUREAU_PCM` précise son nom, avec `hub_mix` comme valeur de migration par défaut.
@@ -68,7 +98,7 @@ Les noms sont inscrits sous les faders et disposent de deux lignes. Les sources 
 
 La révision audio ajoute des commandes côté serveur. Pour un serveur 3.0 existant, sauvegarde `/opt/bureau-audio` et les préférences, puis remplace `app.py`, `audio.py` et les quatre fichiers `static/index.html`, `static/style.css`, `static/app.js`, `static/knob-scale.svg`. Redémarre `sudo systemctl restart bureau-audio` puis recharge complètement la page. Une brève interruption audio est attendue. Si la révision audio est déjà installée et que tu remplaces uniquement la présentation, les quatre fichiers statiques suffisent et aucun redémarrage audio n’est nécessaire. Le SVG contient les graduations des boutons rotatifs. Le fichier `upgrade.sh` cité plus haut est absent de ce checkout : ne lance pas `install.sh` comme remplacement d’une mise à jour.
 
-Pour activer les niveaux réels sur un Pi utilisant une sortie **gérée** :
+L’installation avec `--configure` active les niveaux réels automatiquement. Pour les activer séparément sur un Pi utilisant une sortie **gérée** :
 
 ```sh
 sudo modprobe snd-aloop

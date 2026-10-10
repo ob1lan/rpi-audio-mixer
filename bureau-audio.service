@@ -10,7 +10,7 @@ Group=bureau-audio
 SupplementaryGroups=audio
 WorkingDirectory=/opt/bureau-audio
 EnvironmentFile=/etc/bureau-audio.env
-Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PATH=/opt/bureau-audio-tools/bluealsa-4.3.1/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStartPre=+/usr/sbin/rfkill unblock bluetooth
 ExecStart=/usr/bin/python3 /opt/bureau-audio/app.py
 Restart=on-failure

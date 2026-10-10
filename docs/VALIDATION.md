@@ -1,5 +1,13 @@
 # Vérification de la version 3.0
 
+Installation par téléchargement, vérifiée uniquement en ligne de commande :
+
+- Lanceur POSIX `bootstrap.sh` : téléchargement complet avant `sudo`, validation des chemins et types de fichiers de l’archive, nettoyage temporaire et propagation des échecs. Accès GitHub privé via un jeton gardé hors des arguments des processus et retiré avant le setup.
+- Configuration initiale via l’API locale authentifiée : choix ALSA explicite quand plusieurs sorties existent, conservation d’une destination enregistrée, contrôle logiciel fonctionnel et activation de chaque radio présente. Une sortie non prête ou un blocage restant est un échec, pas un succès annoncé.
+- Installation/mise à jour unifiées, sauvegarde et restauration testées sur un Pi simulé. Le script `upgrade.sh`, précédemment absent, est maintenant fourni. Le chargement de `snd-aloop` est persistant ; son fichier est restauré ou retiré à la désinstallation.
+- Repli BlueALSA 4.3.1 avec archive SHA-256 épinglée et installation privée des binaires. La compilation réelle et les pilotes Bluetooth/audio restent à valider sur le Raspberry Pi ; aucune installation système n’a été exécutée sur l’ordinateur.
+- 123 tests Python réussis, dont 19 pour le téléchargement / configurateur et 16 pour installation / mise à jour / désinstallation. Le configurateur est testé contre la vraie API web en mode démo et avec un terminal POSIX non seekable. Syntaxes Python, JavaScript, Bash et POSIX sh, ainsi que `git diff --check`, valides.
+
 
 Nettoyage des éléments inopérants, à la demande de l’utilisateur :
 

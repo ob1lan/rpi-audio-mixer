@@ -40,7 +40,7 @@ class ScriptFixture:
             'bureau-audio-bluealsa.service': {'active': False, 'enabled': 'not-found'},
         }
         (self.root / 'services.json').write_text(json.dumps(services))
-        for name in ('upgrade.sh', 'install.sh', 'uninstall.sh'):
+        for name in ('upgrade.sh', 'install.sh', 'prepare-bluealsa.sh', 'uninstall.sh'):
             script = (self.package / name).read_text()
             for prefix in ('/opt/', '/etc/', '/var/lib/', '/var/backups/'):
                 script = script.replace(prefix, str(self.root) + prefix)
@@ -52,7 +52,7 @@ class ScriptFixture:
             path = self.bin / name
             path.write_text(body)
             path.chmod(0o755)
-        for name in ('sleep', 'apt-get', 'useradd', 'usermod', 'rfkill', 'aplay', 'amixer'):
+        for name in ('sleep', 'apt-get', 'useradd', 'usermod', 'rfkill', 'aplay', 'amixer', 'modprobe'):
             executable(name, '#!/bin/sh\nexit 0\n')
         executable('id', '#!/bin/sh\nexit 0\n')
         executable('uname', '#!/bin/sh\necho Linux\n')
@@ -60,6 +60,7 @@ class ScriptFixture:
         executable('bluealsad' if modern_daemon else 'bluealsa', '#!/bin/sh\nexit 0\n')
         executable('bluealsa-aplay', '#!/bin/sh\necho --volume=software\n')
         executable('python3', '#!/bin/sh\n'
+                   'case "$1" in */configure.py) printf "%s\\n" "$@" > "$FIXTURE_ROOT/configure.log"; exit "${FIXTURE_CONFIGURE:-0}" ;; esac\n'
                    'if [ "$#" = "2" ] && [ "$1" = "-" ]; then\n'
                    ' case "$2" in *[!0-9]*) ;; *) cat >/dev/null; exit "$FIXTURE_READY" ;; esac\n'
                    'fi\n'
@@ -106,10 +107,10 @@ class ScriptFixture:
                             'FIXTURE_ROOT': str(self.root), 'FIXTURE_READY': '0' if ready else '1',
                             'PYTHONDONTWRITEBYTECODE': '1'}
 
-    def run(self, script='upgrade.sh', ready=None):
+    def run(self, script='upgrade.sh', ready=None, arguments=()):
         environment = dict(self.environment)
         if ready is not None: environment['FIXTURE_READY'] = '0' if ready else '1'
-        return subprocess.run(['bash', str(self.package / script)], env=environment,
+        return subprocess.run(['bash', str(self.package / script), *arguments], env=environment,
                               capture_output=True, text=True, timeout=20)
 
     def states(self):
@@ -216,6 +217,71 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual(fixture.states()['bluealsa-aplay.service'], {'enabled': 'linked', 'active': False})
         self.assertEqual(fixture.run('uninstall.sh').returncode, 0)
         self.assertEqual(fixture.states()['bluealsa-aplay.service'], {'enabled': 'linked', 'active': True})
+
+    def test_configure_loads_meter_at_boot_and_forwards_output(self):
+        fixture = ScriptFixture(self, installed=False, daemon=False)
+        result = fixture.run('install.sh', arguments=('--configure', '--non-interactive', '--output', 'USB:0'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((fixture.root / 'etc/modules-load.d/bureau-audio-meter.conf').read_text(), 'snd-aloop\n')
+        self.assertIn('USB:0', (fixture.root / 'configure.log').read_text())
+        self.assertTrue((fixture.root / 'opt/bureau-audio/static/knob-scale.svg').is_file())
+        self.assertEqual(fixture.run('uninstall.sh').returncode, 0)
+        self.assertFalse((fixture.root / 'etc/modules-load.d/bureau-audio-meter.conf').exists())
+
+    def test_failed_install_restores_existing_meter_configuration(self):
+        fixture = ScriptFixture(self, installed=False, daemon=False, ready=False)
+        meter = fixture.root / 'etc/modules-load.d/bureau-audio-meter.conf'
+        meter.parent.mkdir()
+        meter.write_text('# original\nsnd-aloop\n')
+        result = fixture.run('install.sh', arguments=('--configure',))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(meter.read_text(), '# original\nsnd-aloop\n')
+
+    def test_incomplete_configuration_keeps_service_but_reports_failure(self):
+        fixture = ScriptFixture(self, installed=False, daemon=False)
+        fixture.environment['FIXTURE_CONFIGURE'] = '1'
+        result = fixture.run('install.sh', arguments=('--configure',))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(fixture.states()['bureau-audio.service']['active'])
+        self.assertTrue((fixture.root / 'opt/bureau-audio/app.py').exists())
+        self.assertIn('http://', result.stdout)
+
+    def test_uninstall_restores_previous_meter_file_after_repeated_setup(self):
+        fixture = ScriptFixture(self, installed=False, daemon=False)
+        meter = fixture.root / 'etc/modules-load.d/bureau-audio-meter.conf'
+        meter.parent.mkdir()
+        meter.write_text('# previous custom file\n')
+        self.assertEqual(fixture.run('install.sh', arguments=('--configure',)).returncode, 0)
+        self.assertEqual(fixture.run('upgrade.sh', arguments=('--configure',)).returncode, 0)
+        self.assertEqual(fixture.run('uninstall.sh').returncode, 0)
+        self.assertEqual(meter.read_text(), '# previous custom file\n')
+
+    def test_setup_enables_running_daemon_for_boot_and_uninstall_restores_state(self):
+        fixture = ScriptFixture(self, installed=False)
+        states = fixture.states()
+        states['bluealsa.service']['enabled'] = 'disabled'
+        (fixture.root / 'services.json').write_text(json.dumps(states))
+        self.assertEqual(fixture.run('install.sh', arguments=('--configure',)).returncode, 0)
+        self.assertEqual(fixture.states()['bluealsa.service'], {'active': True, 'enabled': 'enabled'})
+        self.assertEqual(fixture.run('uninstall.sh').returncode, 0)
+        self.assertEqual(fixture.states()['bluealsa.service'], {'active': True, 'enabled': 'disabled'})
+
+    def test_failed_setup_restores_daemon_boot_state(self):
+        fixture = ScriptFixture(self, installed=False, ready=False)
+        states = fixture.states()
+        states['bluealsa.service']['enabled'] = 'disabled'
+        (fixture.root / 'services.json').write_text(json.dumps(states))
+        self.assertNotEqual(fixture.run('install.sh', arguments=('--configure',)).returncode, 0)
+        self.assertEqual(fixture.states()['bluealsa.service'], {'active': True, 'enabled': 'disabled'})
+
+    def test_missing_loopback_does_not_claim_complete_setup(self):
+        fixture = ScriptFixture(self, installed=False)
+        (fixture.bin / 'modprobe').write_text('#!/bin/sh\nexit 1\n')
+        result = fixture.run('install.sh', arguments=('--configure',))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(fixture.states()['bureau-audio.service']['active'])
+        self.assertFalse((fixture.root / 'etc/modules-load.d/bureau-audio-meter.conf').exists())
+        self.assertIn('snd-aloop indisponible', result.stderr)
 
 
 if __name__ == '__main__': unittest.main()
