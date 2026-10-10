@@ -1,5 +1,18 @@
 # Vérification de la version 3.0
 
+Adaptation tactile du 10 octobre 2026, vérifiée sans navigateur ni iPad :
+
+- Zones GAIN de 56 × 56 px sur les appareils tactiles, gestes verticaux plus fins et vrais boutons −/+ de 44 × 44 px par pas de 0,1 dB. Les boutons suivent les limites et la disponibilité des gains existants.
+- Glissement relatif des deux faders MAIN MIX, sans saut de volume au premier contact, avec capture du doigt, synchronisation gauche/droite et protection contre un second doigt concurrent. Les mises à jour de statut préservent le geste même si l’entrée ne reçoit pas le focus. Le fader des sources conserve son geste natif.
+- 12 tests Node des gestionnaires JavaScript réels réussis : routes API et valeurs, précision, limites, contrôle indisponible, annulation/perte de capture, plusieurs doigts, lecture du statut pendant un geste, clavier et souris. Ils sont ajoutés au workflow GitHub Actions.
+- Vérification du DOM avec le HTML et le JavaScript réels : boutons de gain reliés aux commandes, contrôles existants, sorties indisponibles, LED et banques. Géométrie tactile simulée à 1280 × 900, 1024 × 768, 390 × 844, 320 × 568 et 844 × 390 : respectivement 8, 6, 1, 1 et 5 sources par banque.
+- CSS analysé sans erreur ; dimensions calculées à ces formats et à 768 × 1024, avec place suffisante pour les boutons dans chaque colonne. Ces calculs ne constituent pas une inspection visuelle. Syntaxe JavaScript et `git diff --check` valides. Le confort réel au doigt reste à vérifier sur l’iPad.
+
+Accès public au dépôt, vérifié le 10 octobre 2026 :
+
+- `https://github.com/ob1lan/rpi-audio-mixer`, le lanceur brut sur `main` et l’archive GitHub sont accessibles sans authentification. L’archive contient les scripts de setup / mise à jour, le configurateur et les fichiers nécessaires ; la syntaxe POSIX du lanceur téléchargé est valide.
+- README adapté à l’accès public : commande directe sans jeton, clone Git et mise à jour depuis `main`. Les instructions de dépôt privé et la mention périmée d’un `upgrade.sh` absent ont été retirées. Aucun setup système ni contrôle d’application graphique effectué pour cette vérification.
+
 Installation par téléchargement, vérifiée uniquement en ligne de commande :
 
 - Lanceur POSIX `bootstrap.sh` : téléchargement complet avant `sudo`, validation des chemins et types de fichiers de l’archive, nettoyage temporaire et propagation des échecs. Accès GitHub privé via un jeton gardé hors des arguments des processus et retiré avant le setup.

@@ -4,6 +4,7 @@ let state = null, toastTimer = null, polling = false, authenticated = false;
 const cards = new Map(), receivers = new Map(), writes = new Map(), actions = new Set();
 const routeRows = new Map();
 const dragging = new Set();
+const activeSliders = new Map();
 let layoutFrame = null, outputDirty = false, outputFingerprint = "", savedOutputFingerprint = "", openedConfiguration = false;
 let channelBank = 0, bankCapacity = 1;
 
@@ -109,7 +110,8 @@ function progress(slider) {
 function isBusy(key, slider) {
   const write = writes.get(key);
   const activeControl = document.activeElement;
-  return activeControl === slider || (key === "master" && [$("master-volume"), $("master-volume-right")].includes(activeControl)) || !!(write && (write.pending || write.running));
+  const masterFaders = [$("master-volume"), $("master-volume-right")];
+  return activeSliders.has(slider) || activeControl === slider || (key === "master" && masterFaders.some(fader => fader === activeControl || activeSliders.has(fader))) || !!(write && (write.pending || write.running));
 }
 function range(slider, output, value, key, suffix=" %") {
   if (!isBusy(key, slider)) slider.value = value ?? 0;
@@ -139,38 +141,87 @@ async function flush(key, path) {
   }
 }
 function sliderEvents(slider, output, key, path, getBody, suffix=" %") {
-  slider.addEventListener("pointerdown", event => { dragging.add(event.pointerId); });
+  slider.addEventListener("pointerdown", event => { if (!slider.disabled) dragging.add(event.pointerId); });
   slider.addEventListener("input", () => {
     progress(slider);
     output.textContent = suffix === " dB" ? `+${Number(slider.value).toFixed(1)} dB` : `${slider.value} %`;
     slider.setAttribute("aria-valuetext", output.textContent);
+    updateGainButtons(slider);
     sendQueued(key, path, getBody(Number(slider.value)));
   });
   slider.addEventListener("change", () => flush(key, path));
   slider.addEventListener("blur", () => { if (state && authenticated) render(state); });
 }
-function rotaryEvents(slider) {
+function setSliderValue(slider, value) {
+  const minimum = Number(slider.min), maximum = Number(slider.max), step = Number(slider.step) || 1;
+  const rounded = minimum + Math.round((value - minimum) / step) * step;
+  const next = String(Number(Math.max(minimum, Math.min(maximum, rounded)).toFixed(6)));
+  if (slider.value === next) return;
+  slider.value = next;
+  slider.dispatchEvent(new Event("input", {bubbles:true}));
+}
+function pointerDrag(slider, valueFromPointer) {
   slider.addEventListener("pointerdown", event => {
+    const masterFaders = [$("master-volume"), $("master-volume-right")];
+    const competingMaster = masterFaders.includes(slider) && masterFaders.some(fader => activeSliders.has(fader));
     if (slider.disabled || event.button !== 0) return;
+    if (activeSliders.has(slider) || competingMaster) { event.preventDefault(); return; }
     event.preventDefault();
     slider.focus({preventScroll:true});
-    slider.setPointerCapture(event.pointerId);
-    const initial = Number(slider.value), x = event.clientX, y = event.clientY;
-    const span = Number(slider.max) - Number(slider.min), step = Number(slider.step) || 1;
+    const start = {value:Number(slider.value), x:event.clientX, y:event.clientY,
+      span:Number(slider.max) - Number(slider.min), touch:event.pointerType !== "mouse"};
+    activeSliders.set(slider, event.pointerId);
+    dragging.add(event.pointerId);
     const move = pointer => {
-      const raw = initial + ((y - pointer.clientY) + (pointer.clientX - x) * .5) * span / 150;
-      slider.value = String(Math.max(Number(slider.min), Math.min(Number(slider.max), Math.round(raw / step) * step)));
-      slider.dispatchEvent(new Event("input", {bubbles:true}));
+      if (pointer.pointerId !== event.pointerId || slider.disabled) return;
+      pointer.preventDefault();
+      setSliderValue(slider, valueFromPointer(start, pointer));
     };
-    const end = () => {
+    const end = pointer => {
+      if (pointer.pointerId !== event.pointerId) return;
       slider.removeEventListener("pointermove", move);
       slider.removeEventListener("pointerup", end);
       slider.removeEventListener("pointercancel", end);
+      slider.removeEventListener("lostpointercapture", end);
+      activeSliders.delete(slider);
+      dragging.delete(event.pointerId);
+      if (slider.hasPointerCapture(event.pointerId)) slider.releasePointerCapture(event.pointerId);
       slider.dispatchEvent(new Event("change", {bubbles:true}));
+      scheduleLayout();
     };
     slider.addEventListener("pointermove", move);
     slider.addEventListener("pointerup", end);
     slider.addEventListener("pointercancel", end);
+    slider.addEventListener("lostpointercapture", end);
+    slider.setPointerCapture(event.pointerId);
+  });
+}
+function rotaryEvents(slider) {
+  // A straight vertical gesture is easier to keep precise with a fingertip.
+  pointerDrag(slider, (start, pointer) => start.value + (start.y - pointer.clientY + (start.touch ? 0 : (pointer.clientX - start.x) * .5)) * start.span / (start.touch ? 240 : 150));
+  const container = slider.closest(".gain-control");
+  for (const button of container.querySelectorAll("[data-gain-step]")) {
+    button.addEventListener("click", () => {
+      if (slider.disabled || activeSliders.has(slider)) return;
+      setSliderValue(slider, Number(slider.value) + Number(button.dataset.gainStep) * (Number(slider.step) || .1));
+      slider.dispatchEvent(new Event("change", {bubbles:true}));
+    });
+  }
+}
+function updateGainButtons(slider) {
+  const container = slider.closest(".gain-control");
+  if (!container) return;
+  for (const button of container.querySelectorAll("[data-gain-step]")) {
+    button.disabled = slider.disabled || (Number(button.dataset.gainStep) < 0 ? Number(slider.value) <= Number(slider.min) : Number(slider.value) >= Number(slider.max));
+  }
+}
+function masterFaderEvents(slider) {
+  pointerDrag(slider, (start, pointer) => {
+    if (start.travel === undefined) {
+      const cap = slider.closest(".fader-well").querySelector(".fader-cap");
+      start.travel = Math.max(1, slider.getBoundingClientRect().height - cap.getBoundingClientRect().height);
+    }
+    return start.value + (start.y - pointer.clientY) * start.span / start.travel;
   });
 }
 async function immediate(button, path, body, key, onSuccess = () => {}) {
@@ -382,6 +433,7 @@ function render(data) {
   range($("master-gain"), $("master-gain-value"), data.master.gain, "master", " dB");
   $("master-volume").disabled = $("master-volume-right").disabled = $("master-mute").disabled = !data.master_ready;
   $("master-gain").disabled = !data.master_ready || gainMax === 0;
+  updateGainButtons($("master-gain"));
   $("master-mute").classList.toggle("is-muted", data.master.muted);
   $("master-mute").setAttribute("aria-label", data.master.muted ? "Rétablir le son général" : "Couper le son général");
   $("master-mute").setAttribute("aria-pressed", String(data.master.muted));
@@ -451,6 +503,7 @@ function render(data) {
     range(knob, card.querySelector(".device-gain-value"), device.gain ?? 0, device.address, " dB");
     slider.disabled = mute.disabled = device.volume === null;
     knob.disabled = !device.gain_ready;
+    updateGainButtons(knob);
     mute.classList.toggle("is-muted", device.muted);
     mute.setAttribute("aria-pressed", String(device.muted));
     mute.setAttribute("aria-label", `${device.muted ? "Rétablir" : "Couper"} le son de ${device.name}`);
@@ -486,6 +539,8 @@ $("output-form").addEventListener("submit", event => {
 });
 sliderEvents($("master-volume"), $("master-volume-value"), "master", "/api/master", volume => ({volume}));
 sliderEvents($("master-volume-right"), $("master-volume-value"), "master", "/api/master", volume => ({volume}));
+masterFaderEvents($("master-volume"));
+masterFaderEvents($("master-volume-right"));
 sliderEvents($("master-gain"), $("master-gain-value"), "master", "/api/master", gain => ({gain}), " dB");
 rotaryEvents($("master-gain"));
 $("master-mute").addEventListener("click", () => {

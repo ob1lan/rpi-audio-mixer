@@ -104,9 +104,15 @@ h1 { font-size: 16px; letter-spacing: 2.1px; font-weight: 800; }
 .knob span { position: absolute; z-index: 1; inset: 2px; border-radius: 50%; transform: rotate(var(--rotation)); }
 .knob span::before { content: ""; display: block; margin: 0 auto; width: 2px; height: 10px; background: #e6e8da; border-radius: 1px; }
 .knob-input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: ns-resize; touch-action: none; }
+.knob-input, .fader, .gain-stepper button { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .knob-dial:has(input:focus-visible) { outline: 3px solid #67bbef; outline-offset: 2px; border-radius: 50%; }
 .knob-dial:has(input:disabled) { opacity: .45; }
 .range-ends { display: flex; justify-content: center; gap: 23px; font-size: 6px; line-height: 8px; }
+.gain-stepper { display: none; justify-content: center; gap: 4px; margin-top: 6px; }
+.gain-stepper button { width: 28px; min-height: 24px; padding: 0; border: 1px solid #73806b; border-radius: 3px; background: #343d2f; color: #e1e7d8; font: 18px Arial, sans-serif; touch-action: manipulation; }
+.gain-stepper button:active { background: #4d5a45; }
+.master-trim .gain-stepper button { background: #c8d0c1; color: #293722; }
+.master-trim .gain-stepper button:active { background: #a9b89e; }
 .source-no-gain { font-size: 8px; }
 /* The real black switch sits in the dark panel; its amber lamp sits below, beside the slot. */
 .mute-control { display: flex; align-items: center; justify-content: space-between; gap: 5px; height: 32px; padding: 3px 3px 4px; flex-shrink: 0; color: #c0c7b8; }
@@ -338,5 +344,25 @@ footer { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-t
   .console-top .eyebrow { display: none; }
   .console-top h2 { font-size: 15px; }
   .scribble { height: 30px; }
+}
+/* Keep finger targets usable even in landscape or with an attached mouse. */
+@media (any-pointer: coarse) {
+  .console { --strip-min-width: 104px; --gain-height: 192px; }
+  .source-trim .knob-dial, .master-trim .knob-dial { width: 56px; height: 56px; }
+  .source-trim .knob, .master-trim .knob { width: 38px; height: 38px; }
+  .source-trim .trim-label, .master-trim .trim-label { font-size: 9px; }
+  .source-trim .trim-label output, .master-trim .trim-label output { font-size: 12px; }
+  .gain-stepper { display: flex; }
+  .gain-stepper button { width: 44px; min-width: 44px; min-height: 44px; font-size: 22px; }
+  .master-trim .strip-indicator { margin-top: 8px; }
+  .master-destination { display: none; }
+  .master-strip .fader-section { grid-template-columns: 12px minmax(44px, 1fr) minmax(44px, 1fr) 14px; gap: 4px; }
+  .master-strip .fader-cap { width: 40px; }
+}
+@media (any-pointer: coarse) and (max-width: 759px) {
+  .console { --master-width: 174px; --strip-min-width: 102px; }
+  .master-panel { grid-template-columns: minmax(0, 1fr) 60px; }
+  .stereo-meter { width: 60px; }
+  .gain-stepper { gap: 2px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; } }

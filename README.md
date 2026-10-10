@@ -13,11 +13,11 @@ Le paquet ne contient aucune adresse Bluetooth, source ou carte audio imposée. 
 
 ## Installation
 
-Prérequis : Python 3.9+, BlueZ, ALSA et BlueALSA avec `bluealsa-aplay`, un récepteur Bluetooth A2DP et une sortie ALSA stéréo. Une carte USB peut remplacer le jack absent de certains modèles. L’application accepte les formats de volume BlueALSA `uint16` et tableau d’octets, ainsi que les propriétés `Sampling` et `Rate`.
+Sur le Pi : Debian / Raspberry Pi OS avec systemd, une connexion Internet, `curl`, `python3`, `tar`, `bash` et un compte avec accès `sudo` (ou root). BlueZ, ALSA, BlueALSA et les dépendances Python sont installés par le script. Prévois au moins un récepteur Bluetooth A2DP et une sortie ALSA stéréo ; une carte USB peut remplacer le jack absent de certains modèles. L’application nécessite Python 3.9+ et accepte les formats de volume BlueALSA `uint16` et tableau d’octets, ainsi que les propriétés `Sampling` et `Rate`.
 
 ### Une seule commande
 
-Quand ces fichiers sont publiés sur `main` et que le dépôt est public, colle cette commande dans le terminal du Pi :
+Le [dépôt GitHub](https://github.com/ob1lan/rpi-audio-mixer) est public : aucun compte GitHub ni jeton d’accès n’est nécessaire. Colle cette commande dans le terminal du Pi :
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/ob1lan/rpi-audio-mixer/main/bootstrap.sh | sh
@@ -35,21 +35,13 @@ curl -fsSL https://raw.githubusercontent.com/ob1lan/rpi-audio-mixer/main/bootstr
 
 Sans sortie déjà enregistrée et avec plusieurs destinations possibles, `--non-interactive` exige `--output` et affiche les identifiants disponibles. Il ne choisit pas une carte arbitraire. `--repo OWNER/REPO` et `--ref BRANCH_OU_TAG` permettent de télécharger un autre dépôt ou une version déterminée ; ils précèdent les options de configuration.
 
-Pour un **dépôt privé**, exporte `GH_TOKEN` avec un jeton GitHub autorisé à lire le contenu du dépôt, puis utilise l’API authentifiée pour télécharger le lanceur :
-
-```sh
-read -rsp 'GitHub token: ' GH_TOKEN; printf '\n'; export GH_TOKEN
-printf 'header = "Authorization: Bearer %s"\nheader = "Accept: application/vnd.github.raw+json"\n' "$GH_TOKEN" | curl --config - -fsSL 'https://api.github.com/repos/ob1lan/rpi-audio-mixer/contents/bootstrap.sh?ref=main' | sh
-unset GH_TOKEN
-```
-
-Le jeton ne figure pas dans les arguments de `curl`, n’est pas enregistré et n’est pas transmis à l’installation privilégiée. Le dépôt doit contenir `bootstrap.sh` avant d’utiliser ces commandes.
-
 Le lecteur doit proposer `--volume=software`. L’installation automatique conserve un lecteur compatible existant. Sinon, elle compile [BlueALSA 4.3.1](https://github.com/arkq/bluez-alsa/blob/v4.3.1/INSTALL.md), avec le codec SBC, dans `/opt/bureau-audio-tools/bluealsa-4.3.1`, à partir d’une archive dont le SHA-256 est vérifié. Les binaires Debian et les versions compilées par l’utilisateur ne sont pas écrasés. Cette compilation peut prendre plusieurs minutes sur un Pi. Les [options du lecteur 4.3.1](https://github.com/arkq/bluez-alsa/blob/v4.3.1/doc/bluealsa-aplay.1.rst) décrivent le volume logiciel.
 
-Depuis le dossier du projet copié sur le Pi :
+Si tu préfères cloner le projet sur le Pi (avec `git` installé) :
 
 ```sh
+git clone https://github.com/ob1lan/rpi-audio-mixer.git
+cd rpi-audio-mixer
 sudo bash install.sh --configure
 ```
 
@@ -68,9 +60,10 @@ L’installation nécessite root. Ensuite, l’interface et le lecteur fonctionn
 
 ## Mise à jour depuis 2.x ou 3.0
 
-Copie le nouveau dossier sur le Pi puis lance :
+Relance la commande `curl … | sh` ci-dessus : elle télécharge la dernière version de `main` et met à jour une installation existante. Si tu utilises un clone Git, depuis son dossier :
 
 ```sh
+git pull --ff-only
 sudo bash upgrade.sh --configure
 ```
 
@@ -92,11 +85,13 @@ Le volume par source agit sur son flux BlueALSA stéréo. Lance une lecture si s
 
 La présentation reprend le style du [Behringer XENYX X2222USB](https://www.behringer.com/en/products/0601-ADA) pour les seules commandes effectives : panneaux graphite, surface inférieure argentée, capuchons de faders noirs pour les sources et clairs pour MAIN MIX. Les poussoirs MUTE noirs à triangle ont un voyant ambré à droite de la glissière. Le voyant vert FLUX indique un flux actif, sans mesurer son niveau individuel. Les deux colonnes de voyants ronds du vumètre sont placées à droite, au-dessus des faders généraux liés. Aucun bouton EQ, AUX, FX ou BAL décoratif ni fausse prise ne figure dans la console.
 
-GAIN, MUTE, LINK et les faders commandent les fonctions audio existantes. Les graduations des faders restent en pourcentage et celles du vumètre en dBFS. Les gains de source vont de 0 à +4 dB, indépendamment des faders. Fais glisser un bouton GAIN vers le haut ou vers la droite pour augmenter sa valeur ; les flèches du clavier fonctionnent également. LINK déconnecte ou reconnecte la source ; son infobulle précise l’action. Les deux faders MAIN MIX règlent le même volume stéréo et portent la mention « L / R LIÉS ».
+GAIN, MUTE, LINK et les faders commandent les fonctions audio existantes. Les graduations des faders restent en pourcentage et celles du vumètre en dBFS. Les gains de source vont de 0 à +4 dB, indépendamment des faders. Fais glisser un bouton GAIN vers le haut pour augmenter sa valeur ; les flèches du clavier fonctionnent également. À la souris, un déplacement vers la droite augmente aussi le gain. LINK déconnecte ou reconnecte la source ; son infobulle précise l’action. Les deux faders MAIN MIX règlent le même volume stéréo et portent la mention « L / R LIÉS ».
+
+Sur tablette, les gains ont une zone tactile de 56 × 56 px et des boutons **− / +** de 44 × 44 px pour ajuster de **0,1 dB**. Le glissement au doigt est vertical et plus fin qu’à la souris. Les deux faders MAIN MIX ont des zones tactiles élargies : pose le doigt dans leur couloir et glisse vers le haut ou le bas, sans saut de volume au premier contact. Le réglage continue si le doigt sort du couloir. Ces cibles restent agrandies en paysage ; sur les petits écrans, les banques affichent moins de sources pour conserver l’espace nécessaire.
 
 Les noms sont inscrits sous les faders et disposent de deux lignes. Les sources et MAIN MIX conservent leurs faders verticaux sur téléphone. Les flèches de banque donnent accès aux autres sources, tandis que MAIN MIX reste visible à droite. La longueur des glissières et le nombre de tranches visibles s’adaptent à la fenêtre. Une fenêtre très basse peut nécessiter un défilement vertical. Bluetooth et la configuration de sortie s’ouvrent dans des fenêtres dédiées, défilantes, qui se ferment avec **Fermer**, Échap ou un clic à l’extérieur.
 
-La révision audio ajoute des commandes côté serveur. Pour un serveur 3.0 existant, sauvegarde `/opt/bureau-audio` et les préférences, puis remplace `app.py`, `audio.py` et les quatre fichiers `static/index.html`, `static/style.css`, `static/app.js`, `static/knob-scale.svg`. Redémarre `sudo systemctl restart bureau-audio` puis recharge complètement la page. Une brève interruption audio est attendue. Si la révision audio est déjà installée et que tu remplaces uniquement la présentation, les quatre fichiers statiques suffisent et aucun redémarrage audio n’est nécessaire. Le SVG contient les graduations des boutons rotatifs. Le fichier `upgrade.sh` cité plus haut est absent de ce checkout : ne lance pas `install.sh` comme remplacement d’une mise à jour.
+La révision audio ajoute des commandes côté serveur. Pour mettre à jour un serveur 3.0 existant, suis la procédure de mise à jour ci-dessus, puis recharge complètement la page. Une brève interruption audio est attendue. Si la révision audio est déjà installée et que tu remplaces uniquement la présentation, les quatre fichiers `static/index.html`, `static/style.css`, `static/app.js` et `static/knob-scale.svg` suffisent et aucun redémarrage audio n’est nécessaire. Le SVG contient les graduations des boutons rotatifs.
 
 L’installation avec `--configure` active les niveaux réels automatiquement. Pour les activer séparément sur un Pi utilisant une sortie **gérée** :
 
@@ -133,7 +128,7 @@ Le `routing.json` distribué est vide. N’ajoute pas les réglages d’un Pi r�
 
 ## Développement et dépôt GitHub
 
-Copie ce dossier tel quel dans ton dépôt privé : code, tests, scripts, documentation et workflow GitHub Actions sont inclus. Aucun remote ou dépôt n’est imposé. Le workflow vérifie Python, JavaScript et shell ; il ne déploie pas sur un Pi.
+Le projet est disponible dans le [dépôt public ob1lan/rpi-audio-mixer](https://github.com/ob1lan/rpi-audio-mixer) : code, tests, scripts, documentation et workflow GitHub Actions sont inclus. Clone le dépôt avec la commande indiquée plus haut. Le workflow vérifie Python, JavaScript et shell ; il ne déploie pas sur un Pi.
 
 Sur Mac ou Linux, pour l’aperçu sans matériel :
 
@@ -148,10 +143,11 @@ Ouvre `http://127.0.0.1:8088`, code `demo`. Le bandeau signale que ces commandes
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
 node --check static/app.js
+node --test tests/test_touch.cjs
 for script in *.sh; do bash -n "$script"; done
 ```
 
-Les tests couvrent les contrats D-Bus, les deux formats de volume, les routes dynamiques, les accès web, le lecteur, ses échecs et la migration avec retour arrière. Les radios, cartes et commandes sont simulées. Une précédente présentation a été inspectée dans le navigateur sur ordinateur et mobile. Cette révision est vérifiée par tests Python et DOM ; sa validation visuelle complète et sa validation sonore restent à effectuer sur le matériel cible.
+Les tests couvrent les contrats D-Bus, les deux formats de volume, les routes dynamiques, les accès web, le lecteur, ses échecs et la migration avec retour arrière. Les tests JavaScript couvrent les gestes tactiles, les boutons de gain, les deux faders liés et les mises à jour pendant un glissement. Les radios, cartes et événements tactiles sont simulés. Une précédente présentation a été inspectée dans le navigateur sur ordinateur et mobile. Cette révision est vérifiée par tests Python et DOM ; sa validation visuelle complète, son utilisation au doigt sur iPad et sa validation sonore restent à effectuer sur le matériel cible.
 
 ## Diagnostic et désinstallation
 
