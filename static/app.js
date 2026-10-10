@@ -252,6 +252,13 @@ function makeCard(device) {
     sendQueued(device.address, "/api/device", {address:device.address, muted:!current.muted});
     flush(device.address, "/api/device");
   });
+  card.querySelector(".device-solo").addEventListener("click", event => {
+    if (actions.has(device.address) || writes.get(device.address)?.running) return;
+    const current = state.devices.find(d => d.address === device.address);
+    sendQueued(device.address, "/api/device", {address:device.address, solo:!current.solo});
+    event.currentTarget.disabled = true;
+    flush(device.address, "/api/device");
+  });
   card.querySelector(".device-connect").addEventListener("click", event => {
     const current = state.devices.find(d => d.address === device.address);
     immediate(event.currentTarget, "/api/device", {address:device.address, action:current.connected ? "disconnect" : "connect"}, device.address);
@@ -489,10 +496,11 @@ function render(data) {
     card.querySelector(".signal-led").classList.toggle("active", device.playing);
     const sample = device.sampling ? `${(device.sampling / 1000).toLocaleString("fr-FR", {maximumFractionDigits:1})} kHz` : "";
     card.querySelector(".device-format").textContent = device.codec ? `${device.codec}${sample ? " / " + sample : ""}` : "EN ATTENTE";
-    card.querySelector(".device-detail").textContent = device.codec ? (device.channels === 2 ? "Deux canaux · L / R" : `${device.channels} canal`) : (!device.paired ? `Appairer sur ${device.receiver}` : (device.connected ? "Lance une lecture" : "Prêt à se reconnecter"));
+    card.classList.toggle("is-solo-suppressed", Boolean(device.solo_suppressed));
+    card.querySelector(".device-detail").textContent = device.solo_suppressed ? "Exclu par SOLO" : (device.codec ? (device.channels === 2 ? "Deux canaux · L / R" : `${device.channels} canal`) : (!device.paired ? `Appairer sur ${device.receiver}` : (device.connected ? "Lance une lecture" : "Prêt à se reconnecter")));
     card.querySelector(".device-detail").title = card.querySelector(".device-detail").textContent;
     card.querySelector(".device-format").title = card.querySelector(".device-format").textContent;
-    const slider = card.querySelector(".device-volume"), knob = card.querySelector(".device-gain"), mute = card.querySelector(".device-mute"), connect = card.querySelector(".device-connect");
+    const slider = card.querySelector(".device-volume"), knob = card.querySelector(".device-gain"), mute = card.querySelector(".device-mute"), solo = card.querySelector(".device-solo"), connect = card.querySelector(".device-connect");
     slider.setAttribute("aria-label", `Volume de ${device.name}`);
     knob.setAttribute("aria-label", `Gain de ${device.name}`);
     knob.max = String(device.gain_max || 0);
@@ -507,6 +515,11 @@ function render(data) {
     mute.classList.toggle("is-muted", device.muted);
     mute.setAttribute("aria-pressed", String(device.muted));
     mute.setAttribute("aria-label", `${device.muted ? "Rétablir" : "Couper"} le son de ${device.name}`);
+    solo.disabled = Boolean(actions.has(device.address) || writes.get(device.address)?.running);
+    solo.classList.toggle("is-solo", Boolean(device.solo));
+    solo.setAttribute("aria-pressed", String(Boolean(device.solo)));
+    solo.setAttribute("aria-label", `${device.solo ? "Désactiver" : "Activer"} SOLO pour ${device.name}`);
+    solo.title = device.solo ? "Désactiver SOLO et rétablir les autres sources si aucun SOLO ne reste actif" : "Écouter uniquement les sources en SOLO ; les MUTE restent prioritaires";
     card.querySelector(".connect-text").textContent = pending ? "Connexion…" : (device.connected ? "Déconnecter" : "Reconnecter");
     connect.title = card.querySelector(".connect-text").textContent;
     connect.classList.toggle("is-connected", device.connected);

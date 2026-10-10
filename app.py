@@ -82,6 +82,23 @@ def encode_volume(value, volume=None, muted=None):
     return (levels[0] << 8) | levels[1] if packed else bytes(levels)
 
 
+def mute_channels(value):
+    decode_volume(value)
+    levels = [value >> 8, value & 255] if isinstance(value, int) else list(value)
+    return [bool(v & 128) for v in levels]
+
+
+def restore_mutes(value, channels):
+    """Keep current channel levels while restoring the pre-solo mute bits."""
+    decode_volume(value)
+    packed = isinstance(value, int)
+    levels = [value >> 8, value & 255] if packed else list(value)
+    if len(channels) != len(levels):
+        channels = [all(channels)] * len(levels)
+    levels = [(v & 127) | (128 if muted else 0) for v, muted in zip(levels, channels)]
+    return (levels[0] << 8) | levels[1] if packed else bytes(levels)
+
+
 def master_db(volume, gain):
     number(volume, 0, 100)
     number(gain, 0, 4)
@@ -177,7 +194,13 @@ class SourceRegistry:
                     self.specs[adapter] = {'address': adapter, 'label': 'Récepteur ' + adapter[-5:],
                                            'short_label': 'BT' + str(len(self.specs) + 1), 'alias': 'Bureau Audio ' + adapter[-5:]}
                 result[address] = {'address': address, 'adapter': adapter, 'kind': item.get('kind', 'computer'),
-                                   'gain': number(item.get('gain', 0), 0, SOURCE_GAIN_MAX)}
+                                   'gain': number(item.get('gain', 0), 0, SOURCE_GAIN_MAX),
+                                   'solo': boolean(item.get('solo', False))}
+                if 'solo_mutes' in item:
+                    channels = item['solo_mutes']
+                    if not isinstance(channels, list) or not channels:
+                        raise ValueError('États mute de la source invalides.')
+                    result[address]['solo_mutes'] = [boolean(v) for v in channels]
                 # Les anciens libellés personnalisés ne sont jamais réutilisés comme nom Bluetooth.
                 if isinstance(item.get('bluetooth_name'), str) and item['bluetooth_name'].strip():
                     result[address]['bluetooth_name'] = item['bluetooth_name']
@@ -209,6 +232,10 @@ class SourceRegistry:
         spec = self.sources.get(address) or self.retired.get(address, {})
         return spec.get('bluetooth_name') or address
 
+    def solo_state(self, address):
+        solo = bool(self.sources[address].get('solo', False))
+        return {'solo': solo, 'solo_suppressed': not solo and any(v.get('solo', False) for v in self.sources.values())}
+
     def change_source(self, action, address, adapter=None):
         address = bt_address(address)
         if action not in ('assign', 'retire', 'restore'):
@@ -224,6 +251,7 @@ class SourceRegistry:
         elif address not in self.sources:
             raise ValueError('Appareil inconnu.')
         elif action == 'retire':
+            self.sources[address]['solo'] = False
             self.retired[address] = self.sources.pop(address)
         else:
             self.sources[address]['adapter'] = adapter
@@ -546,6 +574,10 @@ class PiBackend(SourceRegistry):
             except Exception as exc:
                 self.pcms = {}
                 self.errors.append('Audio Bluetooth : ' + str(exc))
+            try:
+                await self.apply_solo()
+            except Exception as exc:
+                self.errors.append('SOLO : ' + str(exc))
             await self.refresh_audio()
 
     async def refresh_audio(self):
@@ -677,11 +709,47 @@ class PiBackend(SourceRegistry):
             raise ValueError('Appaire cet appareil avec ' + spec['alias'] + ' depuis ses réglages Bluetooth.')
         return path
 
+    async def apply_solo(self):
+        """Solo is a software mute overlay, independent from the user's MUTE."""
+        selected = any(v.get('solo', False) for v in self.sources.values())
+        for address, spec in {**self.sources, **self.retired}.items():
+            adapter = self.adapters.get(spec['adapter'])
+            if not adapter:
+                continue
+            device_path = adapter['path'] + '/dev_' + address.replace(':', '_')
+            suppressed = selected and address in self.sources and not spec.get('solo', False)
+            restored = False
+            for pcm_path, props in self.pcms.items():
+                if props.get('Device') != device_path:
+                    continue
+                channels = spec.get('solo_mutes')
+                if suppressed:
+                    if channels is None:
+                        # Save before muting so a crash cannot lose the user's MUTE.
+                        spec['solo_mutes'] = mute_channels(props['Volume'])
+                        self.save_registry()
+                    target = encode_volume(props['Volume'], muted=True)
+                elif channels is not None:
+                    target = restore_mutes(props['Volume'], channels)
+                else:
+                    continue
+                if target != props['Volume'] or not props.get('SoftVolume'):
+                    await self.set_property('org.bluealsa', pcm_path, PCM, 'SoftVolume', 'b', True)
+                    await self.set_property('org.bluealsa', pcm_path, PCM, 'Volume', 'q' if isinstance(target, int) else 'ay', target)
+                    props['Volume'], props['SoftVolume'] = target, True
+                if not suppressed and channels is not None:
+                    restored = True
+            if restored:
+                del spec['solo_mutes']
+                self.save_registry()
+
     async def set_device(self, address, changes):
         address = bt_address(address)
         async with self.lock:
             if address not in self.sources:
                 raise ValueError('Appareil inconnu.')
+            if 'solo' in changes:
+                boolean(changes['solo'])
             matching = []
             if set(changes) & {'volume', 'muted'}:
                 path = self.device_path(address)
@@ -694,10 +762,29 @@ class PiBackend(SourceRegistry):
                 self.sources[address]['gain'] = gain
                 self.save_registry()
             for pcm_path, props in matching:
-                packed = encode_volume(props['Volume'], changes.get('volume'), changes.get('muted'))
+                spec = self.sources[address]
+                channels = spec.get('solo_mutes')
+                requested_mute = changes.get('muted')
+                packed = encode_volume(props['Volume'], changes.get('volume'), True if channels is not None else requested_mute)
                 await self.set_property('org.bluealsa', pcm_path, PCM, 'SoftVolume', 'b', True)
                 await self.set_property('org.bluealsa', pcm_path, PCM, 'Volume', 'q' if isinstance(packed, int) else 'ay', packed)
                 props['Volume'], props['SoftVolume'] = packed, True
+                if channels is not None and requested_mute is not None:
+                    spec['solo_mutes'] = [boolean(requested_mute)] * len(channels)
+                    self.save_registry()
+            if 'solo' in changes:
+                spec = self.sources[address]
+                previous = spec.get('solo', False)
+                spec['solo'] = changes['solo']
+                self.save_registry()
+                try:
+                    await self.apply_solo()
+                except Exception:
+                    spec['solo'] = previous
+                    self.save_registry()
+                    with contextlib.suppress(Exception):
+                        await self.apply_solo()
+                    raise
 
     async def device_action(self, address, action):
         address = bt_address(address)
@@ -791,7 +878,9 @@ class PiBackend(SourceRegistry):
             props = self.devices.get(path, {})
             stream = next((v for v in self.pcms.values() if path and v.get('Device') == path), None)
             volume, muted = decode_volume(stream['Volume']) if stream else (None, False)
-            devices.append({**spec, 'name': self.source_name(address),
+            if 'solo_mutes' in spec:
+                muted = all(spec['solo_mutes'])
+            devices.append({**{k: v for k, v in spec.items() if k != 'solo_mutes'}, **self.solo_state(address), 'name': self.source_name(address),
                             'receiver': self.specs[spec['adapter']]['short_label'],
                             'remote_name': self.source_name(address),
                             'receiver_present': bool(receiver), 'connected': bool(props.get('Connected')),
@@ -905,6 +994,9 @@ class DemoBackend(SourceRegistry):
             gain = number(changes['gain'], 0, SOURCE_GAIN_MAX)
             self.sources[device['address']]['gain'] = gain
             self.save_registry()
+        if 'solo' in changes:
+            self.sources[device['address']]['solo'] = boolean(changes['solo'])
+            self.save_registry()
         device.update(changes)
 
     async def device_action(self, address, action):
@@ -949,7 +1041,7 @@ class DemoBackend(SourceRegistry):
         return {'demo': True, 'version': VERSION, 'bluetooth': True,
                 'adapters': [{**v, 'pairing_seconds': max(0, math.ceil(self.deadlines.get(v['address'], 0) - time.monotonic()))}
                              for v in self.adapters], 'master': dict(self.master), 'master_ready': self.master_ready,
-                'gain_max': self.gain_max, 'devices': [{**v, 'gain': v.get('gain', 0), 'gain_max': SOURCE_GAIN_MAX,
+                'gain_max': self.gain_max, 'devices': [{**v, **self.solo_state(v['address']), 'gain': v.get('gain', 0), 'gain_max': SOURCE_GAIN_MAX,
                                                       'gain_ready': self.master_ready} for v in self.devices],
                 'retired_devices': [{**v, 'name': self.source_name(a), 'connected': False} for a, v in self.retired.items()], 'errors': [],
                 'configuration': {'output': self.output, 'output_choices': self.output_choices, 'configured': self.master_ready,
@@ -962,7 +1054,7 @@ class DemoBackend(SourceRegistry):
         levels = [0.0, 0.0]
         if self.master_ready and not self.master['muted']:
             for i, device in enumerate(self.devices):
-                if device['playing'] and device['connected'] and not device['muted']:
+                if device['playing'] and device['connected'] and not device['muted'] and not self.solo_state(device['address'])['solo_suppressed']:
                     amplitude = (device['volume'] or 0) / 100 * 10 ** (device.get('gain', 0) / 20)
                     for channel in (0, 1):
                         levels[channel] += amplitude * (.15 + .28 * (1 + math.sin(t * (3.1 + i * .7) + channel * .8 + i)) / 2)
@@ -1081,9 +1173,9 @@ def create_app(backend, access_key):
             if command in ('connect', 'disconnect', 'trust'):
                 await backend.device_action(address, command)
             elif command == 'volume':
-                if set(data) - {'address', 'action', 'volume', 'muted', 'gain'}:
+                if set(data) - {'address', 'action', 'volume', 'muted', 'gain', 'solo'}:
                     raise ValueError('Réglage de source inconnu.')
-                changes = {k: data[k] for k in ('volume', 'muted', 'gain') if k in data}
+                changes = {k: data[k] for k in ('volume', 'muted', 'gain', 'solo') if k in data}
                 if not changes:
                     raise ValueError('Réglage absent.')
                 if 'volume' in changes:
@@ -1092,6 +1184,8 @@ def create_app(backend, access_key):
                     number(changes['gain'], 0, SOURCE_GAIN_MAX)
                 if 'muted' in changes:
                     boolean(changes['muted'])
+                if 'solo' in changes:
+                    boolean(changes['solo'])
                 await backend.set_device(address, changes)
             else:
                 raise ValueError('Action inconnue.')

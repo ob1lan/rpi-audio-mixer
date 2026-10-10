@@ -106,7 +106,10 @@
       </div>
       <p class="source-no-gain small" hidden>Gain indisponible</p>
     </div>
-    <div class="mute-control"><span class="mute-legend">MUTE</span><button class="device-mute mute-button" type="button" aria-label="Couper le son de la source" aria-pressed="false"><span class="switch-triangle" aria-hidden="true"></span></button></div>
+    <div class="channel-controls">
+      <div class="mute-control"><span class="mute-legend">MUTE</span><button class="device-mute mute-button" type="button" aria-label="Couper le son de la source" aria-pressed="false"><span class="switch-triangle" aria-hidden="true"></span></button></div>
+      <div class="mute-control solo-control"><span class="mute-legend solo-legend"><span class="solo-led" aria-hidden="true"></span>SOLO</span><button class="device-solo solo-button" type="button" aria-label="Écouter cette source en solo" aria-pressed="false"><span class="switch-triangle" aria-hidden="true"></span></button></div>
+    </div>
     <div class="fader-section"><div class="fader-scale" aria-hidden="true"><span class="scale-unit">%</span><div class="scale-marks"><span>100</span><span>75</span><span>50</span><span>25</span><span>0</span></div></div><div class="fader-well"><label class="sr-only">Volume</label><span class="fader-cap" aria-hidden="true"></span><input class="fader device-volume" type="range" min="0" max="100" step="1"></div><div class="fader-side"><div class="lamp-row"><span class="mute-led" aria-hidden="true"></span><span>MUTE</span></div><div class="strip-indicator"><span class="signal-led" aria-hidden="true"></span><span class="signal-legend" aria-hidden="true">FLUX</span><span class="device-status sr-only"></span></div><div class="strip-actions"><button class="device-connect connection-button" type="button"><span class="switch-triangle" aria-hidden="true"></span><span class="connect-text sr-only">Reconnecter</span></button><span aria-hidden="true">LINK</span></div></div></div>
     <div class="level-readout"><output></output><span>NIVEAU</span></div>
     <div class="scribble"><h3 class="device-name"></h3><span class="device-subtitle"></span></div>

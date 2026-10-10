@@ -1,5 +1,13 @@
 # Vérification de la version 3.0
 
+Ajout de SOLO et voyants MUTE rouges du 10 octobre 2026 :
+
+- SOLO réel par source via les bits mute logiciels BlueALSA, sélection additive et MUTE explicite prioritaire. Volumes et bits mute gauche/droite conservés ; les états de restauration sont enregistrés avant l’exclusion pour survivre à un redémarrage.
+- Réapplication aux flux reconnectés et aux nouvelles sources, levée de SOLO sans flux, retrait du dernier canal SOLO et restauration après un échec D-Bus vérifiés. L’API valide strictement le booléen et exige l’authentification. Le mode démo et son vumètre suivent les mêmes exclusions.
+- Voyants MUTE rouges sur les sources et MASTER, voyant SOLO ambré distinct, indication « Exclu par SOLO », boutons MUTE/SOLO de 44 × 44 px sur les appareils tactiles et bande de commandes commune pour conserver l’alignement des faders.
+- 133 tests Python et 12 tests JavaScript tactiles réussis. Vérification DOM avec les vrais HTML/JavaScript et l’API démo locale : clics SOLO, sélection multiple, volumes inchangés, MUTE indépendant, conservation du focus et canal déconnecté. Vérification DOM existante des commandes, vumètre et banques aux cinq géométries simulées également réussie.
+- La vérification DOM ne constitue pas une inspection visuelle ni une validation audio sur Raspberry Pi. L’inspection dans le navigateur n’a pas été menée à terme : l’application était utilisée simultanément et a changé de page. Aucun réglage du matériel réel n’a été exécuté.
+
 Adaptation tactile du 10 octobre 2026, vérifiée sans navigateur ni iPad :
 
 - Zones GAIN de 56 × 56 px sur les appareils tactiles, gestes verticaux plus fins et vrais boutons −/+ de 44 × 44 px par pas de 0,1 dB. Les boutons suivent les limites et la disponibilité des gains existants.
