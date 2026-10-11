@@ -50,7 +50,7 @@ window.addEventListener("pointerup", endDrag);
 window.addEventListener("pointercancel", endDrag);
 $("bank-prev").addEventListener("click", () => { channelBank--; scheduleLayout(); });
 $("bank-next").addEventListener("click", () => { channelBank++; scheduleLayout(); });
-for (const [panelId, buttonId] of [["receivers-panel", "open-receivers"], ["configuration-panel", "open-configuration"]]) {
+for (const [panelId, buttonId] of [["receivers-panel", "open-receivers"], ["configuration-panel", "open-configuration"], ["equalizer-panel", "open-equalizer"]]) {
   const panel = $(panelId);
   $(buttonId).addEventListener("click", () => panel.showModal());
   panel.querySelector(".dialog-close").addEventListener("click", () => panel.close());
@@ -426,6 +426,7 @@ function render(data) {
     : `${available} / ${data.adapters.length} radios actives`;
   renderRoutes(data);
   renderConfiguration(data);
+  equalizerEditor.receive(data.equalizer);
   const gainMax = Math.max(0, Number(data.master.gain_max ?? data.gain_max ?? data.configuration?.output?.gain_max ?? 0));
   $("master-gain").max = String(gainMax);
   $("master-gain-max").textContent = `+${gainMax.toLocaleString("fr-FR")} dB`;
@@ -574,6 +575,11 @@ async function poll() {
     } else if ($("login").hidden) toast(error.message);
   } finally { polling = false; }
 }
+const equalizerEditor = createEqualizerEditor({
+  api,
+  onState:data => { state = data; if (authenticated) render(state); },
+  getLevels:() => meterData && performance.now() - meterFetched < 600 ? meterData : null
+});
 poll();
 setInterval(() => { if (authenticated) poll(); }, 2000);
 

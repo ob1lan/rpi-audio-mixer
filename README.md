@@ -91,9 +91,9 @@ GAIN, MUTE, SOLO, LINK et les faders commandent les fonctions audio existantes. 
 
 Sur tablette, les gains ont une zone tactile de 56 × 56 px et des boutons **− / +** de 44 × 44 px pour ajuster de **0,1 dB**. Le glissement au doigt est vertical et plus fin qu’à la souris. Les deux faders MAIN MIX ont des zones tactiles élargies : pose le doigt dans leur couloir et glisse vers le haut ou le bas, sans saut de volume au premier contact. Le réglage continue si le doigt sort du couloir. Ces cibles restent agrandies en paysage ; sur les petits écrans, les banques affichent moins de sources pour conserver l’espace nécessaire.
 
-Les noms sont inscrits sous les faders et disposent de deux lignes. Les sources et MAIN MIX conservent leurs faders verticaux sur téléphone. Les flèches de banque donnent accès aux autres sources, tandis que MAIN MIX reste visible à droite. La longueur des glissières et le nombre de tranches visibles s’adaptent à la fenêtre. Une fenêtre très basse peut nécessiter un défilement vertical. Bluetooth et la configuration de sortie s’ouvrent dans des fenêtres dédiées, défilantes, qui se ferment avec **Fermer**, Échap ou un clic à l’extérieur.
+Les noms sont inscrits sous les faders et disposent de deux lignes. Les sources et MAIN MIX conservent leurs faders verticaux sur téléphone. Les flèches de banque donnent accès aux autres sources, tandis que MAIN MIX reste visible à droite. La longueur des glissières et le nombre de tranches visibles s’adaptent à la fenêtre. Une fenêtre très basse peut nécessiter un défilement vertical. Bluetooth, l’EQ et la configuration de sortie s’ouvrent dans des fenêtres dédiées, défilantes, qui se ferment avec **Fermer**, Échap ou un clic à l’extérieur.
 
-La révision audio, y compris SOLO, ajoute des commandes côté serveur. Pour mettre à jour un serveur 3.0 existant, suis la procédure de mise à jour ci-dessus, puis recharge complètement la page. Une brève interruption audio est attendue. SOLO nécessite la mise à jour du serveur `app.py` et de l’interface. Si cette révision est déjà installée et que tu remplaces uniquement la présentation, les quatre fichiers `static/index.html`, `static/style.css`, `static/app.js` et `static/knob-scale.svg` suffisent et aucun redémarrage audio n’est nécessaire. Le SVG contient les graduations des boutons rotatifs.
+La révision audio, y compris SOLO et l’EQ, ajoute des commandes côté serveur. Pour mettre à jour un serveur 3.0 existant, suis la procédure de mise à jour ci-dessus, puis recharge complètement la page. Une brève interruption audio est attendue. Ces fonctions nécessitent aussi la mise à jour du serveur. Si cette révision est déjà installée et que tu remplaces uniquement la présentation, les cinq fichiers `static/index.html`, `static/style.css`, `static/app.js`, `static/equalizer.js` et `static/knob-scale.svg` suffisent et aucun redémarrage audio n’est nécessaire. Le SVG contient les graduations des boutons rotatifs.
 
 L’installation avec `--configure` active les niveaux réels automatiquement. Pour les activer séparément sur un Pi utilisant une sortie **gérée** :
 
@@ -106,6 +106,27 @@ sudo systemctl restart bureau-audio
 Le serveur détecte la carte `Loopback` et dirige le mélange vers elle, puis transfère les mêmes échantillons stéréo à la sortie physique. Les deux colonnes de 12 LED montrent les crêtes en dBFS : vert, orange près du maximum, rouge à l’écrêtage. Une crête reste visible environ 650 ms ; CLIP reste allumé une seconde. Les mesures sont transmises dix fois par seconde et s’éteignent en cas de données périmées. Le transfert ajoute des tampons et peut augmenter la latence ; sa fluidité reste à valider sur le Pi. Les mesures précèdent le DAC et tout réglage analogique matériel ; elles ne mesurent pas le niveau acoustique. Sans Loopback ou avec une ancienne route personnalisée, le vumètre indique **INACTIF** et l’écoute conserve sa route directe. `BUREAU_METER_CARD=off` dans l’environnement du service désactive ce transfert ; redémarre le service après modification. L’aperçu local est explicitement **SIMULÉ**, sans capture du son de l’ordinateur.
 
 ## Audio et limites
+
+### EQ paramétrique sur MASTER
+
+Le bouton **EQ · MASTER** ouvre un égaliseur stéréo avec six bandes. Les réglages gauche et droite sont liés, mais chaque canal garde son signal et sa mémoire de filtrage indépendants. L’EQ s’applique au mixage général ; il ne propose pas encore de traitement par source ni de capture de micros physiques.
+
+- **Cloche**, **plateau grave** ou **plateau aigu** par bande ; fréquence de 20 Hz à 20 kHz et gain de −12 à +12 dB. Les cloches proposent un Q de 0,2 à 12. Les plateaux utilisent une pente douce fixe.
+- Glisse les points du graphique à la souris ou au doigt pour modifier fréquence et gain. Les boutons de bande, champs numériques et curseurs permettent aussi le réglage au clavier. La courbe claire montre la réponse combinée, préampli et compensation compris ; les points représentent le gain demandé à chaque bande.
+- Passe-haut et passe-bas indépendants à 12 dB/octave ; le passe-haut doit rester inférieur au passe-bas quand ils sont tous deux activés.
+- **Compenser les boosts** réduit automatiquement le gain global en fonction du maximum estimé de la réponse combinée. **Préampli** ajoute une atténuation de 0 à −24 dB. La compensation est affichée ; ce n’est pas un limiteur et elle ne corrige pas une saturation survenue avant l’EQ.
+- **EQ bypassé · activer** active le traitement ; **EQ actif · bypass** restitue le signal original après une transition de 40 ms. Les bandes et coupures restent mémorisées. **Réinitialiser** remet la courbe à plat et conserve l’état actif/bypass.
+- Les préréglages **Neutre**, **Clarté voix**, **Chaleur** et **Présence** sont des points de départ modifiables. Les réglages effectifs sont appliqués et sauvegardés automatiquement sur le Pi, y compris après fermeture du navigateur ou redémarrage. Une erreur de sauvegarde est affichée avec **Réessayer**.
+
+Le traitement nécessite une **sortie gérée** et **ALSA Loopback** (`snd-aloop`), comme le vumètre. Sans ce chemin, l’interface signale que l’EQ est indisponible et refuse son activation. Les réglages peuvent être préparés en bypass. Une ancienne route personnalisée et `BUREAU_METER_CARD=off` n’offrent pas l’EQ. Si une sortie sans Loopback est choisie alors que l’EQ était activé, les réglages sont conservés mais le signal suit la route directe sans égalisation ; l’interface signale cette indisponibilité.
+
+Pour installer cette révision depuis un clone contenant les nouveaux fichiers, exécute `sudo bash upgrade.sh --configure` sur le Pi, puis recharge complètement la page. Le script installe `python3-numpy` et `python3-scipy`, copie `equalizer.py` et `static/equalizer.js` et conserve les préférences existantes. Une mise à jour limitée aux fichiers de présentation ne suffit pas pour l’EQ.
+
+Les filtres biquad suivent les formules de l’[Audio EQ Cookbook du W3C](https://www.w3.org/TR/audio-eq-cookbook/) et utilisent le filtrage natif SOS de SciPy dans un thread séparé de l’interface web. Les changements de réglages ne relancent pas les lecteurs BlueALSA. L’EQ se situe dans le transfert Loopback, après le mélange et le volume logiciel général, avant la sortie matérielle. Le vumètre et le spectre mesurent les échantillons réellement transmis **après** l’EQ et leur conversion en S16_LE.
+
+Le spectre de sortie utilise une fenêtre de 2 048 échantillons à 48 kHz et 96 bandes d’affichage logarithmiques ; sa résolution est limitée dans les graves. Les niveaux périmés sont masqués. L’aperçu local permet de manipuler la courbe et de sauvegarder les réglages, avec la mention **SIMULÉ** ; aucun spectre matériel n’est inventé et aucun son du Mac n’est capturé.
+
+Les tests vérifient les réponses des filtres sur des signaux numériques, la continuité entre blocs, le bypass, la séparation des canaux, la persistance et l’API. L’écoute, la charge CPU et la stabilité des tampons doivent encore être validées sur le Raspberry Pi cible ; les périodes et tampons audio actuels sont conservés.
 
 Pour une nouvelle sortie, le moteur crée une configuration ALSA privée : conversion `plug`, gain `softvol` par source, volume commun `softvol` si choisi, puis mélange `dmix`. Chaque lecteur BlueALSA est filtré par adresse Bluetooth. Le gain des sources est mémorisé, y compris après retrait et rétablissement. Une ancienne route personnalisée conserve son lecteur unique et ne propose pas de gain par source. La sortie matérielle est testée en **stéréo S16_LE, 48 kHz**, avec périodes de 40 ms et cinq périodes de tampon. Une carte incompatible échoue avec un diagnostic. Un changement raté restaure la sortie précédente.
 
@@ -145,7 +166,9 @@ Ouvre `http://127.0.0.1:8088`, code `demo`. Le bandeau signale que ces commandes
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
 node --check static/app.js
+node --check static/equalizer.js
 node --test tests/test_touch.cjs
+node --test tests/test_equalizer.cjs
 for script in *.sh; do bash -n "$script"; done
 ```
 

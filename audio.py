@@ -18,6 +18,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from equalizer import EqualizerPlan, EqualizerProcessor
 
 
 SOFTWARE_CONTROL = 'Bureau Audio Master'
@@ -269,8 +270,10 @@ class OutputMeter:
     def __init__(self, engine):
         self.engine, self.processes, self.tasks = engine, [], []
         self.peaks, self.updated, self.error = [0, 0], 0, ''
+        self.processor = None
 
     async def start(self, output, card):
+        self.processor = await asyncio.to_thread(EqualizerProcessor, self.engine.equalizer)
         common = ['-q', '-t', 'raw', '-f', 'S16_LE', '-c', '2', '-r', '48000',
                   '--period-time=40000', '--buffer-time=200000']
         env = self.engine.environment()
@@ -286,12 +289,15 @@ class OutputMeter:
 
     async def forward(self, capture, playback):
         try:
+            if self.processor is None:
+                self.processor = await asyncio.to_thread(EqualizerProcessor, self.engine.equalizer)
             while True:
                 data = await capture.stdout.readexactly(7680)
+                data = await asyncio.to_thread(self.processor.process, data, self.engine.equalizer)
                 playback.stdin.write(data)
                 await playback.stdin.drain()
                 self.peaks, self.updated = pcm_peaks(data), time.monotonic()
-        except (asyncio.IncompleteReadError, BrokenPipeError, ConnectionError, OSError) as exc:
+        except Exception as exc:
             self.error = 'La liaison de mesure audio est interrompue : ' + str(exc)
 
     def running(self):
@@ -301,6 +307,7 @@ class OutputMeter:
         peaks = self.peaks if self.running() and time.monotonic() - self.updated < .3 else [0, 0]
         return {'available': self.running(), 'left': peaks[0], 'right': peaks[1],
                 'clip_left': peaks[0] >= 32767 / 32768, 'clip_right': peaks[1] >= 32767 / 32768,
+                'spectrum': self.processor.spectrum if self.processor and self.running() and time.monotonic() - self.updated < .3 else None,
                 'demo': False, 'message': self.error}
 
     async def stop(self):
@@ -337,6 +344,8 @@ class AudioEngine:
         self.inputs, self.active_inputs = {}, {}
         self.input_processes, self.input_reader_tasks = {}, []
         self.meter, self.meter_card = None, None
+        self.equalizer = EqualizerPlan.create(state.data.get('equalizer', {}))
+        self.equalizer_revision = state.data.get('equalizer_revision', 0)
         self.error, self.applied, self.stderr = '', False, ''
         self.master_known = False
         self.lock = asyncio.Lock()
@@ -625,6 +634,38 @@ class AudioEngine:
             combined = {**self.master, **settings}
             self.master = await self._apply_master(combined, self.output, self.control)
             return dict(self.master)
+
+    def equalizer_snapshot(self):
+        available = bool(self.applied and self.meter and self.meter.running())
+        message = '' if available else 'L’EQ nécessite une sortie gérée et ALSA Loopback (snd-aloop).'
+        return {**self.equalizer.snapshot(available, message=message), 'revision': self.equalizer_revision}
+
+    async def set_equalizer(self, changes):
+        if not isinstance(changes, dict) or not changes:
+            raise ValueError('Réglages EQ attendus.')
+        async with self.lock:
+            plan = await asyncio.to_thread(EqualizerPlan.create, {**self.equalizer.settings, **changes})
+            if plan.settings['enabled'] and not self.equalizer_snapshot()['available']:
+                raise RuntimeError('L’EQ nécessite une sortie gérée disponible et ALSA Loopback (snd-aloop).')
+            previous = self.state.data.get('equalizer')
+            previous_revision = self.state.data.get('equalizer_revision')
+            self.state.data['equalizer'] = plan.settings
+            self.state.data['equalizer_revision'] = self.equalizer_revision + 1
+            try:
+                self.state.save()
+            except BaseException:
+                if previous is None:
+                    self.state.data.pop('equalizer', None)
+                else:
+                    self.state.data['equalizer'] = previous
+                if previous_revision is None:
+                    self.state.data.pop('equalizer_revision', None)
+                else:
+                    self.state.data['equalizer_revision'] = previous_revision
+                raise
+            self.equalizer = plan
+            self.equalizer_revision += 1
+        return self.equalizer_snapshot()
 
     async def get_master(self):
         if self.output is None or self.control is None:

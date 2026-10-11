@@ -30,7 +30,7 @@ package_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 if [[ -x /opt/bureau-audio-tools/bluealsa-4.3.1/bin/bluealsa-aplay ]]; then
   export PATH="/opt/bureau-audio-tools/bluealsa-4.3.1/bin:$PATH"
 fi
-for file in app.py audio.py configure.py prepare-bluealsa.sh routing.json bureau-audio.service bureau-audio-dbus.conf bureau-audio-radio.service bureau-audio-radio.rules static/index.html static/app.js static/style.css static/icon.svg static/knob-scale.svg; do
+for file in app.py audio.py equalizer.py configure.py prepare-bluealsa.sh routing.json bureau-audio.service bureau-audio-dbus.conf bureau-audio-radio.service bureau-audio-radio.rules static/index.html static/app.js static/equalizer.js static/style.css static/icon.svg static/knob-scale.svg; do
   [[ -f "$package_dir/$file" ]] || { echo "Dossier incomplet : $file" >&2; exit 1; }
 done
 if [[ -f /opt/bureau-audio/app.py && $install_upgrade != true ]]; then
@@ -39,7 +39,7 @@ if [[ -f /opt/bureau-audio/app.py && $install_upgrade != true ]]; then
 fi
 echo 'Installation des composants Debian disponibles…'
 apt-get update
-apt-get install -y python3-aiohttp python3-dbus-next alsa-utils bluez avahi-daemon polkitd rfkill kmod
+apt-get install -y python3-aiohttp python3-dbus-next python3-numpy python3-scipy alsa-utils bluez avahi-daemon polkitd rfkill kmod
 if { ! command -v bluealsa >/dev/null && ! command -v bluealsad >/dev/null; } || ! command -v bluealsa-aplay >/dev/null; then
   if ! apt-get install -y bluez-alsa-utils; then
     [[ $install_configure == true ]] || exit 1
@@ -223,8 +223,8 @@ PY
   if [[ -f "$install_metadata/owned-daemon.json" ]]; then systemctl enable bureau-audio-bluealsa.service; fi
 fi
 install -d -m 0755 /opt/bureau-audio /opt/bureau-audio/static
-for file in app.py audio.py configure.py routing.json; do install -m 0644 "$package_dir/$file" "/opt/bureau-audio/$file"; done
-for asset in index.html app.js style.css icon.svg knob-scale.svg; do install -m 0644 "$package_dir/static/$asset" "/opt/bureau-audio/static/$asset"; done
+for file in app.py audio.py equalizer.py configure.py routing.json; do install -m 0644 "$package_dir/$file" "/opt/bureau-audio/$file"; done
+for asset in index.html app.js equalizer.js style.css icon.svg knob-scale.svg; do install -m 0644 "$package_dir/static/$asset" "/opt/bureau-audio/static/$asset"; done
 if [[ ! -f /etc/bureau-audio-routes.json ]]; then install -m 0644 "$package_dir/routing.json" /etc/bureau-audio-routes.json; fi
 if [[ ! -f /etc/bureau-audio.env ]]; then
   access_key=$(python3 -c 'import secrets; print(secrets.token_hex(12))')

@@ -9,6 +9,7 @@
   <title>Bureau Audio · Console</title>
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/equalizer.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -27,7 +28,36 @@
   <div id="dashboard" hidden>
     <div id="demo-banner" class="banner" hidden>APERÇU SIMULÉ · Ces réglages ne contrôlent aucun appareil.</div>
     <div id="errors" class="error-box" role="status" hidden></div>
-    <div class="desk-toolbar"><span class="desk-model">BA / MIX <span>BLUETOOTH MIXING CONSOLE</span></span><div><button id="open-receivers" class="secondary" type="button" aria-haspopup="dialog">Bluetooth et appareils</button><button id="open-configuration" class="secondary" type="button" aria-haspopup="dialog">Sortie audio</button></div></div>
+    <div class="desk-toolbar"><span class="desk-model">BA / MIX <span>BLUETOOTH MIXING CONSOLE</span></span><div><button id="open-equalizer" class="secondary" type="button" aria-haspopup="dialog">EQ · MASTER</button><button id="open-receivers" class="secondary" type="button" aria-haspopup="dialog">Bluetooth et appareils</button><button id="open-configuration" class="secondary" type="button" aria-haspopup="dialog">Sortie audio</button></div></div>
+    <dialog id="equalizer-panel" class="settings-panel equalizer-panel" aria-labelledby="equalizer-title">
+      <header class="settings-heading"><div><span class="eyebrow">TRAITEMENT STÉRÉO · L / R LIÉS</span><h2 id="equalizer-title">Égaliseur paramétrique</h2><span id="eq-status" class="small" role="status"></span></div><button class="dialog-close secondary" type="button" aria-label="Fermer l’égaliseur">Fermer ×</button></header>
+      <div class="eq-toolbar">
+        <button id="eq-enable" class="secondary" type="button" aria-pressed="false">EQ bypassé</button>
+        <label class="eq-preset-label">Préréglage<select id="eq-preset"><option value="custom">Personnalisé</option><option value="flat">Neutre</option><option value="voice">Clarté voix</option><option value="warm">Chaleur</option><option value="presence">Présence</option></select></label>
+        <button id="eq-reset" class="secondary" type="button">Réinitialiser</button>
+        <label class="eq-check"><input id="eq-spectrum" type="checkbox" checked> Spectre</label>
+      </div>
+      <p id="eq-unavailable" class="eq-notice" hidden></p>
+      <div class="eq-graph-wrap"><canvas id="eq-graph" role="img" aria-label="Réponse de l’égaliseur de 20 Hz à 20 kHz. Les réglages sous le graphique sont accessibles au clavier."></canvas></div>
+      <div class="eq-graph-caption"><span id="eq-curve-label">Courbe préparée · bypass</span><span id="eq-spectrum-status">Spectre indisponible</span></div>
+      <p class="eq-instructions">Glisse un point pour régler la fréquence et le gain. Sélectionne une bande pour ajuster sa largeur Q et son type de filtre.</p>
+      <div id="eq-bands" class="eq-band-tabs" role="group" aria-label="Sélection de la bande EQ"></div>
+      <div class="eq-band-editor">
+        <div class="eq-band-heading"><strong id="eq-band-title">Bande 1</strong><label class="eq-check"><input id="eq-band-enabled" type="checkbox" checked> Bande active</label><label>Type<select id="eq-type"><option value="peak">Cloche</option><option value="low_shelf">Plateau grave</option><option value="high_shelf">Plateau aigu</option></select></label></div>
+        <div class="eq-parameters">
+          <label>Fréquence <span>Hz</span><input id="eq-frequency" type="number" min="20" max="20000" step="1" value="80" aria-label="Fréquence en Hz de la bande sélectionnée"><input id="eq-frequency-slider" type="range" min="0" max="1000" step="1" value="200" aria-label="Fréquence de la bande sélectionnée"></label>
+          <label>Gain <span>dB</span><input id="eq-gain" type="number" min="-12" max="12" step="0.1" value="0" aria-label="Gain en dB de la bande sélectionnée"><input id="eq-gain-slider" type="range" min="-12" max="12" step="0.1" value="0" aria-label="Gain de la bande sélectionnée"></label>
+          <label>Largeur <span>Q</span><input id="eq-q" type="number" min="0.2" max="12" step="0.01" value="1" aria-label="Facteur Q numérique de la bande sélectionnée"><input id="eq-q-slider" type="range" min="0.2" max="12" step="0.01" value="1" aria-label="Facteur Q de la bande sélectionnée"></label>
+        </div>
+        <p id="eq-q-help" class="small">Q faible : correction large. Q élevé : correction étroite.</p>
+      </div>
+      <div class="eq-output-controls">
+        <fieldset><legend>Filtres de coupure · 12 dB/octave</legend><div class="eq-cutoffs"><label class="eq-check"><input id="eq-highpass-enabled" type="checkbox"> Passe-haut</label><label class="sr-only" for="eq-highpass">Fréquence du passe-haut en Hz</label><input id="eq-highpass" type="number" min="20" max="20000" step="1" value="40"><span>Hz</span><label class="eq-check"><input id="eq-lowpass-enabled" type="checkbox"> Passe-bas</label><label class="sr-only" for="eq-lowpass">Fréquence du passe-bas en Hz</label><input id="eq-lowpass" type="number" min="20" max="20000" step="1" value="18000"><span>Hz</span></div></fieldset>
+        <fieldset><legend>Niveau de l’EQ</legend><label class="eq-check"><input id="eq-auto-headroom" type="checkbox" checked> Compenser les boosts</label><div class="eq-preamp"><label for="eq-preamp">Préampli</label><input id="eq-preamp" type="number" min="-24" max="0" step="0.1" value="0"><span>dB</span><output id="eq-compensation">Compensation : 0 dB</output></div></fieldset>
+      </div>
+      <div class="eq-save-line"><span id="eq-save-status" class="small" role="status">Réglages sauvegardés sur le Pi.</span><button id="eq-retry" class="secondary" type="button" hidden>Réessayer</button></div>
+      <p class="small">Les changements sont appliqués automatiquement. Le bypass restitue le signal d’origine. La compensation réduit le gain ajouté par l’EQ ; surveille le vumètre si les sources saturent déjà.</p>
+    </dialog>
     <dialog id="receivers-panel" class="settings-panel" aria-labelledby="receivers-title">
       <header class="settings-heading"><div><h2 id="receivers-title">Bluetooth et appareils</h2><span id="receivers-status" class="small">Récepteurs</span></div><button class="dialog-close secondary" type="button" aria-label="Fermer les réglages Bluetooth">Fermer ×</button></header>
       <div id="receivers" class="receivers-grid"></div>

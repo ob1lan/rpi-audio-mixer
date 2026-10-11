@@ -1,5 +1,12 @@
 # Changements
 
+## EQ MASTER
+
+- Égaliseur paramétrique stéréo à six bandes : courbe interactive, cloches et plateaux, passe-haut/passe-bas, préampli et compensation des boosts.
+- Traitement réel dans la route ALSA Loopback, transitions de 40 ms et bypass sans relance des lecteurs.
+- Spectre mesuré après traitement, sauvegarde automatique et préréglages ; aperçu explicitement simulé.
+- API authentifiée et validée ; dépendances NumPy/SciPy et nouveaux fichiers inclus dans l’installation et les mises à jour.
+
 ## 3.0
 
 - SOLO effectif par source, sélection multiple et restauration des volumes/MUTE ; sélection conservée au redémarrage.

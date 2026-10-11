@@ -52,7 +52,7 @@ class BootstrapTests(unittest.TestCase):
                   'printf "%s%s" "${GH_TOKEN:-}" "${GITHUB_TOKEN:-}" > "$CALL_FILE.credentials"\n'
                   'exit "${INSTALL_FAIL:-0}"\n')
         with tarfile.open(self.archive, 'w:gz') as archive:
-            for name in ('install.sh', 'configure.py', 'prepare-bluealsa.sh', 'app.py', 'audio.py'):
+            for name in ('install.sh', 'configure.py', 'prepare-bluealsa.sh', 'app.py', 'audio.py', 'equalizer.py', 'static/equalizer.js'):
                 content = (script if name == 'install.sh' else '# fixture\n').encode()
                 entry = tarfile.TarInfo('repo-sha/' + name)
                 entry.size = len(content)

@@ -116,6 +116,8 @@ class FakeAudioEngine:
     async def close(self): self.output = None
     def diagnostics(self, output): return []
     def snapshot(self): return {'applied': self.output is not None, 'message': 'Lecteur simulé'}
+    def equalizer_snapshot(self):
+        return self.pi.state.data.get('equalizer', {})
 
 
 class FakePi(PiBackend):

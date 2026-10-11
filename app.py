@@ -20,6 +20,7 @@ from dbus_next import BusType, DBusError, Message, MessageType, Variant
 from dbus_next.aio import MessageBus
 from dbus_next.service import ServiceInterface, method
 from audio import AudioEngine, SOURCE_GAIN_MAX
+from equalizer import EqualizerPlan
 
 ROOT = Path(__file__).resolve().parent
 PROPERTIES = 'org.freedesktop.DBus.Properties'
@@ -693,6 +694,10 @@ class PiBackend(SourceRegistry):
             self.state.data['master'] = current
             self.state.save()
 
+    async def set_equalizer(self, changes):
+        async with self.lock:
+            await self.audio_engine.set_equalizer(changes)
+
     def desired_path(self, address):
         address = bt_address(address)
         if address not in self.routes:
@@ -895,6 +900,7 @@ class PiBackend(SourceRegistry):
                     'connected': any(p.get('Connected') for p in self.devices.values() if p.get('Address', '').upper() == address)}
                    for address, spec in self.retired.items()]
         return {'demo': False, 'version': VERSION, 'bluetooth': any(v['powered'] for v in adapters),
+                'equalizer': self.audio_engine.equalizer_snapshot(),
                 'adapters': adapters, 'master': dict(self.master), 'master_ready': self.master_ready,
                 'gain_max': self.gain_max, 'devices': devices, 'retired_devices': retired, 'errors': list(self.errors),
                 'configuration': {'output': self.output, 'output_choices': self.output_choices,
@@ -906,6 +912,8 @@ class DemoBackend(SourceRegistry):
     """Simulation explicite, sans accès au Bluetooth ni au son de l'ordinateur."""
     def __init__(self, state):
         self.master = state.data.get('master', {'volume': 78, 'gain': 1.2, 'muted': False})
+        self.equalizer = EqualizerPlan.create(state.data.get('equalizer', {}))
+        self.equalizer_revision = state.data.get('equalizer_revision', 0)
         config = demo_config()
         self.init_registry(state, config)
         self.adapters = [{**v, 'present': True, 'powered': True, 'pairing_seconds': 0} for v in self.specs.values()]
@@ -948,6 +956,31 @@ class DemoBackend(SourceRegistry):
     async def start(self): pass
     async def close(self): pass
     async def refresh(self): pass
+
+    async def set_equalizer(self, changes):
+        if not isinstance(changes, dict) or not changes:
+            raise ValueError('Réglages EQ attendus.')
+        plan = EqualizerPlan.create({**self.equalizer.settings, **changes})
+        if plan.settings['enabled'] and not self.master_ready:
+            raise RuntimeError('Configure d’abord la sortie audio.')
+        previous = self.state.data.get('equalizer')
+        previous_revision = self.state.data.get('equalizer_revision')
+        self.state.data['equalizer'] = plan.settings
+        self.state.data['equalizer_revision'] = self.equalizer_revision + 1
+        try:
+            self.state.save()
+        except BaseException:
+            if previous is None:
+                self.state.data.pop('equalizer', None)
+            else:
+                self.state.data['equalizer'] = previous
+            if previous_revision is None:
+                self.state.data.pop('equalizer_revision', None)
+            else:
+                self.state.data['equalizer_revision'] = previous_revision
+            raise
+        self.equalizer = plan
+        self.equalizer_revision += 1
 
     async def set_master(self, changes):
         if not self.master_ready: raise RuntimeError('Configure d’abord la sortie audio.')
@@ -1039,6 +1072,7 @@ class DemoBackend(SourceRegistry):
 
     def snapshot(self):
         return {'demo': True, 'version': VERSION, 'bluetooth': True,
+                'equalizer': {**self.equalizer.snapshot(self.master_ready, demo=True), 'revision': self.equalizer_revision},
                 'adapters': [{**v, 'pairing_seconds': max(0, math.ceil(self.deadlines.get(v['address'], 0) - time.monotonic()))}
                              for v in self.adapters], 'master': dict(self.master), 'master_ready': self.master_ready,
                 'gain_max': self.gain_max, 'devices': [{**v, **self.solo_state(v['address']), 'gain': v.get('gain', 0), 'gain_max': SOURCE_GAIN_MAX,
@@ -1149,6 +1183,8 @@ def create_app(backend, access_key):
             if 'muted' in data:
                 boolean(data['muted'])
             await backend.set_master(data)
+        elif section == 'equalizer':
+            await backend.set_equalizer(data)
         elif section == 'pairing':
             if set(data) != {'enabled', 'adapter'}:
                 raise ValueError('Récepteur et état d’appairage attendus.')
@@ -1204,7 +1240,7 @@ def create_app(backend, access_key):
     app.router.add_post('/api/login', login)
     app.router.add_get('/api/status', status)
     app.router.add_get('/api/levels', levels)
-    app.router.add_post('/api/{section:master|pairing|device|radio|source|configuration}', action)
+    app.router.add_post('/api/{section:master|equalizer|pairing|device|radio|source|configuration}', action)
     app.router.add_static('/static/', ROOT / 'static', show_index=False)
 
     async def lifecycle(app):

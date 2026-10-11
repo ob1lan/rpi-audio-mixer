@@ -18,7 +18,7 @@ class ScriptFixture:
         owner.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.package = self.root / 'package'
-        shutil.copytree(ROOT, self.package, ignore=shutil.ignore_patterns('__pycache__'))
+        shutil.copytree(ROOT, self.package, ignore=shutil.ignore_patterns('__pycache__', '.venv', '.git', 'demo-state*'))
         for folder in ('opt', 'etc/systemd/system', 'etc/dbus-1/system.d', 'etc/polkit-1/rules.d', 'var/lib/bureau-audio'):
             (self.root / folder).mkdir(parents=True)
         self.original = json.dumps({'master': {'volume': 42, 'gain': 1, 'muted': False}})

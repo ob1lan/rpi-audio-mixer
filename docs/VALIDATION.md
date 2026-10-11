@@ -1,3 +1,14 @@
+# EQ MASTER — 11 octobre 2026
+
+- 150 tests Python réussis, dont 17 tests EQ : réponses mesurées sur des sinusoïdes, filtres de coupure, plateaux, stabilité, indépendance des canaux, continuité entre blocs, compensation de bandes superposées, saturation sans débordement entier et retour exact des octets en bypass après transition.
+- Intégration : les octets filtrés traversent le transfert Loopback et alimentent le vumètre ; la configuration ne relance pas les lecteurs. Activation refusée sur une route indisponible, sauvegarde et restauration après erreur de disque, persistance après rechargement et API authentifiée vérifiées sans matériel.
+- 19 tests JavaScript réussis, dont 7 pour l’EQ : cohérence des coefficients Python/JavaScript, courbe logarithmique, écritures successives pendant une requête, rejet des anciennes réponses, glissement tactile à un seul doigt, annulation et réessai après erreur réseau.
+- Aperçu réel dans Brave : fenêtre EQ, activation et préréglage Clarté voix, courbe compensée, mention SIMULÉ et absence de spectre matériel inventé. Rendu inspecté sur ordinateur et avec un viewport mobile de 390 × 844 ; la fenêtre défile et les bandes passent sur deux rangées.
+- Tests locaux avec Python 3.9.6 et Node 24. Syntaxes Python/JavaScript/shell et `git diff --check` vérifiés. Scripts d’installation, téléchargement et mise à jour testés dans des environnements simulés ; NumPy/SciPy et les nouveaux modules sont inclus.
+- Mesure indicative sur le Mac : environ 0,30 ms par bloc audio de 40 ms, six bandes actives et analyse spectrale. Cette mesure ne constitue pas un résultat sur Raspberry Pi.
+
+L’écoute, la charge CPU, la stabilité ALSA et les gestes sur une tablette physique restent à valider sur le Pi cible. La route actuelle conserve ses périodes de 40 ms et ses tampons de 200 ms ; cette extension n’ajoute pas de capture micro ni d’anti-larsen.
+
 # Vérification de la version 3.0
 
 Ajout de SOLO et voyants MUTE rouges du 10 octobre 2026 :

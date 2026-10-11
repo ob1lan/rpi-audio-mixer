@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from types import SimpleNamespace
+from app import StateFile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from audio import (AudioEngine, CommandResult, SOFTWARE_CONTROL, alsa_config,
@@ -164,7 +165,7 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.runner, self.spawn = FakeRunner(), FakeSpawn()
-        self.engine = AudioEngine(SimpleNamespace(path=Path(self.temporary.name) / 'settings.json'),
+        self.engine = AudioEngine(StateFile(self.temporary.name),
                                   runner=self.runner, spawn=self.spawn, controls_provider=controls)
         self.usb = {'card': 'USB', 'control': SOFTWARE_CONTROL, 'pcm': 'plughw:CARD=USB,DEV=0',
                     'label': 'USB DAC', 'mode': 'managed'}
@@ -384,15 +385,18 @@ class EngineTests(unittest.IsolatedAsyncioTestCase):
     async def test_meter_forwards_exact_frames_and_clears_stale_readings(self):
         reader = asyncio.StreamReader()
         written = bytearray()
+        forwarded = asyncio.Event()
         class Writer:
-            def write(self, data): written.extend(data)
+            def write(self, data):
+                written.extend(data)
+                forwarded.set()
             async def drain(self): pass
         meter = OutputMeter(self.engine)
         meter.processes = [FakeProcess(), FakeProcess()]
         task = asyncio.create_task(meter.forward(SimpleNamespace(stdout=reader), SimpleNamespace(stdin=Writer())))
         packet = struct.pack('<hh', -32768, 16384) * 1920
         reader.feed_data(packet)
-        await asyncio.sleep(.01)
+        await asyncio.wait_for(forwarded.wait(), 10)
         self.assertEqual(bytes(written), packet)
         result = meter.snapshot()
         self.assertTrue(result['available'])

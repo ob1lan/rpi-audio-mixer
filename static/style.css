@@ -267,6 +267,59 @@ footer { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-t
 .configuration-diagnostics { color: #ddbb94; font-size: 12px; line-height: 1.6; padding-left: 20px; overflow-wrap: anywhere; }
 .configuration-diagnostics:empty { display: none; }
 
+/* Master EQ follows the console's graphite surface, with six colored bands. */
+.equalizer-panel { width: min(980px, calc(100% - 28px)); }
+#open-equalizer.eq-is-active { color: #bce8da; border-color: #79bca4; }
+.eq-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+.eq-preset-label, .eq-band-heading > label:not(.eq-check) { display: grid; gap: 5px; font-size: 11px; }
+.eq-preset-label { min-width: 170px; flex: 1; }
+.equalizer-panel select, .equalizer-panel input[type="number"] { min-height: 44px; min-width: 0; width: 100%; padding: 8px; color: #ecf0ee; background: #172126; border: 1px solid #64747c; border-radius: 3px; font: inherit; }
+.equalizer-panel input[type="checkbox"] { accent-color: #87c9c1; width: 18px; height: 18px; flex: none; }
+.equalizer-panel input[type="number"]:invalid { border-color: #eea08b; }
+.eq-check { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: 12px; }
+#eq-enable[aria-pressed="true"] { color: #bce8da; border-color: #79bca4; background: #24453a; }
+.eq-notice { color: #ead0a3; font-size: 12px; line-height: 1.6; margin-top: 12px; }
+.eq-graph-wrap { margin-top: 16px; border: 1px solid #53636c; border-radius: 4px; overflow: hidden; background: #131d22; }
+#eq-graph { display: block; width: 100%; height: 290px; touch-action: none; cursor: crosshair; }
+.eq-graph-caption { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin-top: 8px; color: #b7c9cd; font-size: 10px; }
+.eq-instructions { margin: 14px 0 10px; font-size: 12px; color: #bbc7ca; line-height: 1.6; }
+.eq-band-tabs { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.eq-band-tabs button { min-height: 52px; padding: 8px 4px; border: 1px solid #5c6a71; border-top: 3px solid var(--band-color); border-radius: 3px; background: #28343a; color: #c2cccf; font-size: 11px; }
+.eq-band-tabs button[aria-pressed="true"] { background: #3b4b53; border-color: var(--band-color); color: #fff; }
+.eq-band-tabs button span { display: block; margin-top: 5px; font-size: 10px; }
+.eq-band-editor { border: 1px solid #586b73; border-radius: 4px; background: #303e45; padding: 14px; margin-top: 12px; }
+.eq-band-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; }
+.eq-band-heading strong { margin-right: auto; color: var(--band-color); font-size: 14px; }
+.eq-band-heading > label:not(.eq-check) { width: 160px; }
+.eq-parameters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-top: 14px; }
+.eq-parameters > label { font-size: 12px; }
+.eq-parameters label > span { float: right; color: #b4c1c7; font-size: 10px; }
+.eq-parameters input[type="number"] { margin-top: 8px; font-size: 18px; }
+.eq-parameters input[type="range"] { display: block; width: 100%; min-height: 44px; margin: 3px 0 0; accent-color: var(--band-color); }
+.eq-output-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 14px 0; }
+.eq-output-controls fieldset { min-width: 0; border: 1px solid #566b73; padding: 10px 12px; border-radius: 4px; }
+.eq-output-controls legend { padding: 0 5px; font-size: 11px; color: #becbd0; }
+.eq-cutoffs { display: grid; grid-template-columns: 1fr 94px 20px; align-items: center; gap: 6px; }
+.eq-cutoffs > span, .eq-preamp > span { font-size: 11px; }
+.eq-preamp { display: grid; grid-template-columns: 1fr 76px 20px; gap: 8px; align-items: center; font-size: 12px; }
+.eq-preamp output { grid-column: 1 / -1; font-size: 11px; color: #a9ccbd; padding-block: 5px; }
+.eq-save-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; margin-bottom: 8px; }
+.eq-save-line .is-error { color: #f1b7a1; }
+@media (max-width: 599px) {
+  .equalizer-panel { width: calc(100% - 16px); padding-inline: 12px; }
+  .equalizer-panel .settings-heading h2 { font-size: 16px; }
+  .equalizer-panel .settings-heading .eyebrow { font-size: 9px; }
+  .eq-toolbar { gap: 8px; }
+  .eq-preset-label { min-width: 140px; }
+  #eq-graph { height: 240px; }
+  .eq-band-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .eq-parameters { gap: 10px; }
+  .eq-parameters input[type="number"] { font-size: 15px; }
+  .eq-band-heading > label:not(.eq-check) { width: 100%; }
+  .eq-output-controls { grid-template-columns: 1fr; }
+  .eq-band-editor { padding: 12px; }
+}
+
 @media (max-width: 759px) {
   :root { --min-fader-height: 110px; }
   main { padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); }
