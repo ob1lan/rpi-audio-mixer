@@ -1,13 +1,13 @@
 # Bureau Audio 3.0
 
-Console web locale pour recevoir plusieurs sources Bluetooth, les mélanger en stéréo sur un Raspberry Pi et écouter le résultat sur une seule sortie audio. Chaque source possède son fader et son MUTE. MASTER règle le volume commun et le gain disponible.
+Console web locale pour mélanger des sources Bluetooth sur un Raspberry Pi. Le mode live ajoute des micros USB, des traitements par entrée et quatre bus stéréo : salle, retour, streaming et casque PFL. Chaque source possède son niveau et son MUTE ; MASTER règle la salle.
 
 ```text
 Téléphone / ordinateurs → récepteurs Bluetooth du Pi → BlueALSA
                          → mélange ALSA stéréo → jack / USB / HDMI
 ```
 
-Pour des écouteurs sans fil, branche un émetteur Bluetooth à la sortie du Pi. L’application ne gère pas la transmission Bluetooth sortante ni le micro.
+Pour des écouteurs sans fil, branche un émetteur Bluetooth à la sortie du Pi. L’application ne gère pas la transmission Bluetooth sortante. Les micros physiques passent par une interface de capture ALSA, généralement USB.
 
 Le paquet ne contient aucune adresse Bluetooth, source ou carte audio imposée. La détection est automatique ; la sortie peut être choisie dans le terminal à l’installation ou dans la page web. Il peut servir sur d’autres Pi sous Debian / Raspberry Pi OS avec systemd ; la compatibilité sonore avec toutes les radios et cartes n’est pas garantie par les tests simulés.
 
@@ -87,7 +87,7 @@ La présentation reprend le style du [Behringer XENYX X2222USB](https://www.behr
 
 **SOLO** laisse entendre uniquement les sources sélectionnées ; plusieurs SOLO peuvent être actifs ensemble. Les autres sources affichent « Exclu par SOLO ». Les faders, gains et MUTE restent indépendants : un canal en MUTE reste silencieux même en SOLO et son voyant MUTE rouge indique uniquement le MUTE explicite. Désactiver le dernier SOLO rétablit le mélange avec les volumes et MUTE courants, y compris ceux modifiés pendant le SOLO. La sélection est mémorisée après rechargement et redémarrage ; une source reconnectée est exclue si un autre SOLO reste actif. Le bouton reste utilisable sans flux afin de pouvoir lever un SOLO. Retirer une source désactive son SOLO. MASTER continue de régler et couper l’ensemble du mixage.
 
-GAIN, MUTE, SOLO, LINK et les faders commandent les fonctions audio existantes. Les graduations des faders restent en pourcentage et celles du vumètre en dBFS. Les gains de source vont de 0 à +4 dB, indépendamment des faders. Fais glisser un bouton GAIN vers le haut pour augmenter sa valeur ; les flèches du clavier fonctionnent également. À la souris, un déplacement vers la droite augmente aussi le gain. LINK déconnecte ou reconnecte la source ; son infobulle précise l’action. Les deux faders MAIN MIX règlent le même volume stéréo et portent la mention « L / R LIÉS ».
+GAIN, MUTE, SOLO, LINK et les faders commandent les fonctions audio existantes. Les graduations des faders restent en pourcentage et celles du vumètre en dBFS. Les gains de source vont de 0 à +4 dB en mode classique et de −24 à +24 dB en mode live, indépendamment des faders. Fais glisser un bouton GAIN vers le haut pour augmenter sa valeur ; les flèches du clavier fonctionnent également. À la souris, un déplacement vers la droite augmente aussi le gain. LINK déconnecte ou reconnecte la source ; son infobulle précise l’action. Les deux faders MAIN MIX règlent le même volume stéréo et portent la mention « L / R LIÉS ».
 
 Sur tablette, les gains ont une zone tactile de 56 × 56 px et des boutons **− / +** de 44 × 44 px pour ajuster de **0,1 dB**. Le glissement au doigt est vertical et plus fin qu’à la souris. Les deux faders MAIN MIX ont des zones tactiles élargies : pose le doigt dans leur couloir et glisse vers le haut ou le bas, sans saut de volume au premier contact. Le réglage continue si le doigt sort du couloir. Ces cibles restent agrandies en paysage ; sur les petits écrans, les banques affichent moins de sources pour conserver l’espace nécessaire.
 
@@ -109,7 +109,7 @@ Le serveur détecte la carte `Loopback` et dirige le mélange vers elle, puis tr
 
 ### EQ paramétrique sur MASTER
 
-Le bouton **EQ · MASTER** ouvre un égaliseur stéréo avec six bandes. Les réglages gauche et droite sont liés, mais chaque canal garde son signal et sa mémoire de filtrage indépendants. L’EQ s’applique au mixage général ; il ne propose pas encore de traitement par source ni de capture de micros physiques.
+Le bouton **EQ · MASTER** ouvre un égaliseur stéréo avec six bandes. Les réglages gauche et droite sont liés, mais chaque canal garde son signal et sa mémoire de filtrage indépendants. Cet EQ s’applique à la salle. Les EQ des entrées et des autres bus sont accessibles dans **Modules · LIVE**.
 
 - **Cloche**, **plateau grave** ou **plateau aigu** par bande ; fréquence de 20 Hz à 20 kHz et gain de −12 à +12 dB. Les cloches proposent un Q de 0,2 à 12. Les plateaux utilisent une pente douce fixe.
 - Glisse les points du graphique à la souris ou au doigt pour modifier fréquence et gain. Les boutons de bande, champs numériques et curseurs permettent aussi le réglage au clavier. La courbe claire montre la réponse combinée, préampli et compensation compris ; les points représentent le gain demandé à chaque bande.
@@ -118,7 +118,7 @@ Le bouton **EQ · MASTER** ouvre un égaliseur stéréo avec six bandes. Les ré
 - **EQ bypassé · activer** active le traitement ; **EQ actif · bypass** restitue le signal original après une transition de 40 ms. Les bandes et coupures restent mémorisées. **Réinitialiser** remet la courbe à plat et conserve l’état actif/bypass.
 - Les préréglages **Neutre**, **Clarté voix**, **Chaleur** et **Présence** sont des points de départ modifiables. Les réglages effectifs sont appliqués et sauvegardés automatiquement sur le Pi, y compris après fermeture du navigateur ou redémarrage. Une erreur de sauvegarde est affichée avec **Réessayer**.
 
-Le traitement nécessite une **sortie gérée** et **ALSA Loopback** (`snd-aloop`), comme le vumètre. Sans ce chemin, l’interface signale que l’EQ est indisponible et refuse son activation. Les réglages peuvent être préparés en bypass. Une ancienne route personnalisée et `BUREAU_METER_CARD=off` n’offrent pas l’EQ. Si une sortie sans Loopback est choisie alors que l’EQ était activé, les réglages sont conservés mais le signal suit la route directe sans égalisation ; l’interface signale cette indisponibilité.
+En mode classique, le traitement nécessite une **sortie gérée** et **ALSA Loopback** (`snd-aloop`), comme le vumètre. Le moteur live traite directement ses bus et ne nécessite pas Loopback. Sans ce chemin, l’interface signale que l’EQ est indisponible et refuse son activation. Les réglages peuvent être préparés en bypass. Une ancienne route personnalisée et `BUREAU_METER_CARD=off` n’offrent pas l’EQ. Si une sortie sans Loopback est choisie alors que l’EQ était activé, les réglages sont conservés mais le signal suit la route directe sans égalisation ; l’interface signale cette indisponibilité.
 
 Pour installer cette révision depuis un clone contenant les nouveaux fichiers, exécute `sudo bash upgrade.sh --configure` sur le Pi, puis recharge complètement la page. Le script installe `python3-numpy` et `python3-scipy`, copie `equalizer.py` et `static/equalizer.js` et conserve les préférences existantes. Une mise à jour limitée aux fichiers de présentation ne suffit pas pour l’EQ.
 
@@ -126,15 +126,55 @@ Les filtres biquad suivent les formules de l’[Audio EQ Cookbook du W3C](https:
 
 Le spectre de sortie utilise une fenêtre de 2 048 échantillons à 48 kHz et 96 bandes d’affichage logarithmiques ; sa résolution est limitée dans les graves. Les niveaux périmés sont masqués. L’aperçu local permet de manipuler la courbe et de sauvegarder les réglages, avec la mention **SIMULÉ** ; aucun spectre matériel n’est inventé et aucun son du Mac n’est capturé.
 
-Les tests vérifient les réponses des filtres sur des signaux numériques, la continuité entre blocs, le bypass, la séparation des canaux, la persistance et l’API. L’écoute, la charge CPU et la stabilité des tampons doivent encore être validées sur le Raspberry Pi cible ; les périodes et tampons audio actuels sont conservés.
+Les tests vérifient les réponses des filtres sur des signaux numériques, la continuité entre blocs, le bypass, la séparation des canaux, la persistance et l’API. L’écoute, la charge CPU et la stabilité des tampons doivent encore être validées sur le Raspberry Pi cible ; les périodes et tampons audio actuels sont conservés en mode classique.
 
-Pour une nouvelle sortie, le moteur crée une configuration ALSA privée : conversion `plug`, gain `softvol` par source, volume commun `softvol` si choisi, puis mélange `dmix`. Chaque lecteur BlueALSA est filtré par adresse Bluetooth. Le gain des sources est mémorisé, y compris après retrait et rétablissement. Une ancienne route personnalisée conserve son lecteur unique et ne propose pas de gain par source. La sortie matérielle est testée en **stéréo S16_LE, 48 kHz**, avec périodes de 40 ms et cinq périodes de tampon. Une carte incompatible échoue avec un diagnostic. Un changement raté restaure la sortie précédente.
+En mode classique, pour une nouvelle sortie, le moteur crée une configuration ALSA privée : conversion `plug`, gain `softvol` par source, volume commun `softvol` si choisi, puis mélange `dmix`. Chaque lecteur BlueALSA est filtré par adresse Bluetooth. Le gain des sources est mémorisé, y compris après retrait et rétablissement. Une ancienne route personnalisée conserve son lecteur unique et ne propose pas de gain par source. La sortie matérielle est testée en **stéréo S16_LE, 48 kHz**, avec périodes de 40 ms et cinq périodes de tampon. Une carte incompatible échoue avec un diagnostic. Un changement raté restaure la sortie précédente.
 
 Changer de destination interrompt brièvement le lecteur ; renommer la même destination ne le redémarre pas. Le gain matériel dépend du maximum dB déclaré par ALSA ; les contrôles sans mute utilisable ne sont pas proposés. Le volume logiciel reste disponible sur une sortie sans contrôle physique.
 
 Le volume logiciel ne modifie pas les contrôles matériels de la carte. Si l’un d’eux est observé muet ou à zéro, un diagnostic le signale : il peut bloquer l’écoute, selon son lien avec la sortie choisie. Vérifie ce contrôle ou sélectionne-le comme contrôle de volume ; l’application n’ouvre pas arbitrairement toutes les sorties de la carte.
 
-Le gain positif et la somme de sources fortes peuvent saturer : réduis les faders si tu entends une distorsion. Aucun limiteur n’est intégré. Le vumètre nécessite la carte Loopback ; l’ajout ou le retrait d’une source régénère les étages de gain et relance brièvement les lecteurs. La fluidité, le nombre de flux et la latence dépendent des radios et des sources. Plusieurs récepteurs permettent de répartir les flux, sans garantir un nombre illimité de lectures simultanées. Une console de jeu sans sortie A2DP nécessite une entrée ou un émetteur séparé.
+Le gain positif et la somme de sources fortes peuvent saturer : réduis les faders si tu entends une distorsion. Le limiteur est désactivé par défaut ; il ne peut pas réparer une saturation antérieure au traitement. En mode classique, le vumètre nécessite la carte Loopback ; l’ajout ou le retrait d’une source régénère les étages de gain et relance brièvement les lecteurs. La fluidité, le nombre de flux et la latence dépendent des radios et des sources. Plusieurs récepteurs permettent de répartir les flux, sans garantir un nombre illimité de lectures simultanées. Une console de jeu sans sortie A2DP nécessite une entrée ou un émetteur séparé.
+
+### Modules audio et mode live
+
+Le bouton **Modules · LIVE** ouvre sept onglets. Les modifications des modules restent en brouillon jusqu’à **Appliquer les modifications**. **Recharger** les annule ; une modification concurrente impose un rechargement avant application. Les réglages Master et les faders de la console principale conservent leur application immédiate.
+
+| Onglet | Fonctions |
+| --- | --- |
+| Master / FBQ | Compresseur stéréo lié, limiteur de crêtes, banque anti-larsen séparée |
+| Interface USB | Détection ALSA, affectation des canaux aux micros, période et nombre de sorties |
+| Entrées | Niveau, gain, balance, mute, SOLO salle, PFL, EQ visuel à six bandes, gate, compresseur et limiteur |
+| Matrice | Envois vers salle, retour et streaming ; pré/post-fader, niveau et exclusion pour un mix-minus |
+| Bus | Niveau, mute, EQ, dynamique, FBQ et paire de sorties propre à chaque bus |
+| Scènes | Sauvegarde, rappel, export/import JSON et suppression, jusqu’à vingt scènes |
+| Enregistrement | WAV stéréo 48 kHz / 16 bits, prise avant ou après les traitements du bus, téléchargement |
+
+**Le mode live est désactivé par défaut.** Les traitements Master et l’enregistrement de la salle fonctionnent déjà sur la route classique avec Loopback. Les traitements par entrée, la matrice et le PFL utilisent le moteur live. Choisis une sortie **gérée** avec le contrôle logiciel **Bureau Audio Master**, puis ajoute l’interface et ses micros dans **Interface USB**. Les canaux sont numérotés à partir de 1 dans l’interface web. Le gain analogique, l’alimentation des micros et l’éventuel monitoring direct restent des réglages de l’interface physique.
+
+Le mélange live conserve une représentation flottante jusqu’à la conversion finale S32_LE. Il capture chaque interface USB dans un seul flux multicanal et chaque source Bluetooth séparément via le plugin ALSA BlueALSA. Les volumes logiciels BlueALSA sont désactivés pendant ce mode pour que les faders, MUTE et PFL restent indépendants dans le DSP. Le plugin installé dans le préfixe privé BlueALSA est pris en charge. Des tampons bornés et une interpolation avec correction de dérive limitée adaptent les horloges des flux indépendants ; ils ne suppriment pas la latence propre au Bluetooth.
+
+Les périodes configurables sont de 5, 10, 20 ou 40 ms, avec quatre périodes de tampon ALSA. **Cette période n’est pas la latence aller-retour mesurée.** Python et ALSA ne constituent pas une garantie temps réel. Une perte du flux USB arrête la sortie et remonte une erreur ; les sources Bluetooth absentes peuvent se reconnecter. Les compteurs de manque de trames et de dépassement sont visibles dans le panneau. Modifier les captures, le nombre de canaux ou le mode redémarre les processus audio ; ces changements sont refusés pendant un enregistrement.
+
+Le PFL reçoit les entrées après leur EQ/gate/dynamique et avant leur fader, MUTE, balance, automix et ducking. Il utilise le bus casque ; le SOLO exclut les autres entrées de la salle uniquement. L’automix partage le gain entre les micros non muets suivant leur énergie. Le ducking réduit les entrées de type musique quand un micro dépasse le seuil. Une exclusion dans la matrice retire une source d’un bus, notamment pour éviter de renvoyer la voix d’un intervenant dans son propre retour.
+
+Les quatre bus existent même sans sorties physiques affectées et peuvent être enregistrés. Les paires de sorties doivent être distinctes et appartiennent à la **même destination ALSA multicanal**. Quatre bus stéréo simultanément sur des sorties distinctes nécessitent huit canaux de lecture. Un casque indépendant nécessite sa propre paire ; un casque qui copie les sorties 1–2 ne fournit pas de PFL indépendant. Le bus streaming désigne un mélange séparé à enregistrer ou sortir vers un encodeur : l’application ne transmet pas elle-même de stream réseau. La négociation ALSA interdit la conversion automatique du nombre de canaux pour ne pas accepter artificiellement huit sorties sur une carte stéréo.
+
+Une scène mémorise le Master, les niveaux des sources, les EQ, traitements, captures et routages des bus. Elle conserve la destination de lecture ALSA et les affectations Bluetooth actuellement choisies. Importer une scène la stocke sans la rappeler. Un rappel raté tente de restaurer les réglages précédents. Les filtres FBQ live temporaires ne sont pas enregistrés ; les filtres de balance doivent être figés avant sauvegarde. Au retour au mode classique, les volumes/MUTE/SOLO Bluetooth sont repris et les gains sont bornés à sa plage 0…+4 dB.
+
+L’enregistrement se fait dans un thread avec une file bornée. Une erreur, un disque trop lent, moins de 64 Mio libres ou la limite de 2 Gio arrêtent le fichier ; le démarrage exige 128 Mio libres. L’arrêt finalise l’en-tête WAV et rend le téléchargement disponible. Pré enregistre avant EQ/FBQ/dynamique/niveau du bus ; post après ces traitements. En mode classique, la prise pré est déjà après le volume ALSA et l’EQ Master. L’aperçu ne fabrique aucun enregistrement.
+
+### FBQ assisté, balance et live
+
+Chaque bus possède jusqu’à huit filtres fixes étroits, indépendants de l’EQ musical. **Bypass** désactive toute la banque ; **Assisté** propose une fréquence suspecte et permet de l’ajouter manuellement ; **Balance** pose des coupures automatiques pendant la préparation et permet de les figer. **Live automatique** ajoute des filtres temporaires lorsqu’un pic stable présente une croissance répétée, puis les expire suivant la durée réglée.
+
+La détection utilise une FFT de 8 192 échantillons, la proéminence spectrale et la persistance du pic. C’est une **heuristique expérimentale**, pas une garantie de stabilité acoustique. Une note musicale peut ressembler à un larsen et certains larsens peuvent être manqués. Les tests couvrent des signaux synthétiques, les banques et l’expiration ; une validation réelle avec micros, enceintes et musique reste nécessaire. Commence par le mode assisté pour contrôler les suggestions avant d’essayer les modes automatiques.
+
+### Validation prévue sur Raspberry Pi 4B
+
+La cible communiquée est un **Pi 4B**, avec une future interface USB de type Focusrite ; son modèle, les micros et le nombre de sorties restent à déterminer. Aucun de ces matériels n’est actuellement validé. Les capacités ALSA, le fonctionnement duplex à 48 kHz, la correspondance des canaux et les éventuels réglages propriétaires seront vérifiés sur l’interface retenue.
+
+Pour la première session, affecte un micro et la salle, vérifie les niveaux puis le MUTE et le limiteur. Ajoute ensuite une paire casque indépendante pour contrôler le PFL et un bus de retour/streaming. Mesure la latence, la charge CPU et les compteurs de tampons pendant une session prolongée, y compris lors des reconnexions Bluetooth et de l’enregistrement. Vérifie enfin les suggestions FBQ en mode assisté, avec parole et musique, avant une balance acoustique ou un essai live automatique.
 
 ## Données de chaque installation
 
@@ -145,6 +185,7 @@ Le gain positif et la somme de sources fortes peuvent saturer : réduis les fade
 | `/etc/bureau-audio-routes.json` | Routes initiales, facultatives sur une installation neuve |
 | `/var/lib/bureau-audio/settings.json` | Récepteurs, sources, volumes et destination choisis |
 | `/var/lib/bureau-audio/alsa-playback.conf` | Configuration ALSA privée |
+| `/var/lib/bureau-audio/recordings` | Enregistrements WAV finalisés |
 | `/var/lib/bureau-audio-install` | Métadonnées root pour restaurer les services |
 
 Le `routing.json` distribué est vide. N’ajoute pas les réglages d’un Pi réel au dépôt. Le `.gitignore` exclut préférences, environnements, états de démonstration et sauvegardes usuels. L’application est destinée au réseau local ; l’installation ne configure ni accès Internet ni HTTPS.
@@ -167,12 +208,14 @@ Ouvre `http://127.0.0.1:8088`, code `demo`. Le bandeau signale que ces commandes
 .venv/bin/python -m unittest discover -s tests -v
 node --check static/app.js
 node --check static/equalizer.js
+node --check static/studio.js
 node --test tests/test_touch.cjs
 node --test tests/test_equalizer.cjs
+node --test tests/test_studio.cjs
 for script in *.sh; do bash -n "$script"; done
 ```
 
-Les tests couvrent les contrats D-Bus, les deux formats de volume, les routes dynamiques, les accès web, le lecteur, ses échecs et la migration avec retour arrière. Les tests JavaScript couvrent les gestes tactiles, les boutons de gain, les deux faders liés et les mises à jour pendant un glissement. Les radios, cartes et événements tactiles sont simulés. Une précédente présentation a été inspectée dans le navigateur sur ordinateur et mobile. Cette révision est vérifiée par tests Python et DOM ; sa validation visuelle complète, son utilisation au doigt sur iPad et sa validation sonore restent à effectuer sur le matériel cible.
+Les tests couvrent les contrats D-Bus, les deux formats de volume, les routes dynamiques, les accès web, le lecteur, ses échecs et la migration avec retour arrière. Les tests JavaScript couvrent les gestes tactiles, les boutons de gain, les deux faders liés et les mises à jour pendant un glissement. Les radios, cartes et événements tactiles sont simulés. Une précédente présentation a été inspectée dans le navigateur sur ordinateur et mobile. Les nouveaux panneaux ont aussi été inspectés dans Safari sur ordinateur. L’utilisation au doigt sur iPad et la validation sonore restent à effectuer sur le matériel cible.
 
 ## Diagnostic et désinstallation
 
@@ -188,6 +231,7 @@ Pour désinstaller, garde les récepteurs branchés puis lance `sudo bash uninst
 
 - [BlueZ : propriétés des appareils](https://github.com/bluez/bluez/blob/master/doc/org.bluez.Device.rst).
 - [API PCM BlueALSA 4.3.1](https://github.com/arkq/bluez-alsa/blob/v4.3.1/doc/org.bluealsa.PCM1.7.rst) et [API actuelle](https://github.com/arkq/bluez-alsa/blob/master/doc/org.bluealsa.PCM1.7.rst).
+- [Plugin ALSA BlueALSA](https://github.com/arkq/bluez-alsa/blob/master/doc/bluealsa-plugins.7.rst) et [traitement des bits MUTE indépendamment de SoftVolume](https://github.com/arkq/bluez-alsa/blob/v4.3.1/src/io.c).
 - [Référence visuelle XENYX X2222USB](https://www.behringer.com/en/products/0601-ADA).
 - [ALSA Loopback](https://www.alsa-project.org/wiki/Matrix:Module-aloop).
 - [ALSA dmix](https://github.com/alsa-project/alsa-lib/blob/master/src/pcm/pcm_dmix.c) et [softvol](https://github.com/alsa-project/alsa-lib/blob/master/src/pcm/pcm_softvol.c).

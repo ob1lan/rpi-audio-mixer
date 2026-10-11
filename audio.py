@@ -19,6 +19,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from equalizer import EqualizerPlan, EqualizerProcessor
+from studio import Studio, StudioPlan, topology
+from live_audio import LiveAudio, alsa_live_config, audio_work
 
 
 SOFTWARE_CONTROL = 'Bureau Audio Master'
@@ -293,7 +295,7 @@ class OutputMeter:
                 self.processor = await asyncio.to_thread(EqualizerProcessor, self.engine.equalizer)
             while True:
                 data = await capture.stdout.readexactly(7680)
-                data = await asyncio.to_thread(self.processor.process, data, self.engine.equalizer)
+                data = await audio_work(self.engine.studio.process_legacy, data, self.processor, self.engine.equalizer, dict(self.engine.master))
                 playback.stdin.write(data)
                 await playback.stdin.drain()
                 self.peaks, self.updated = pcm_peaks(data), time.monotonic()
@@ -344,8 +346,10 @@ class AudioEngine:
         self.inputs, self.active_inputs = {}, {}
         self.input_processes, self.input_reader_tasks = {}, []
         self.meter, self.meter_card = None, None
+        self.prepare_inputs, self.live_prepared = None, False
         self.equalizer = EqualizerPlan.create(state.data.get('equalizer', {}))
         self.equalizer_revision = state.data.get('equalizer_revision', 0)
+        self.studio, self.live, self.active_topology = Studio(state), None, None
         self.error, self.applied, self.stderr = '', False, ''
         self.master_known = False
         self.lock = asyncio.Lock()
@@ -445,6 +449,8 @@ class AudioEngine:
 
     async def _apply_master(self, settings, output, control):
         settings = checked_settings(settings, control['gain_max'])
+        if self.studio.plan.settings['enabled']:
+            return settings
         arguments = [executable('amixer'), '-c', output['card'], '--', 'sset', output['control']]
         silent = settings['muted'] or settings['volume'] == 0
         if silent and not control['has_switch']:
@@ -472,6 +478,11 @@ class AudioEngine:
             self.stderr = (self.stderr + chunk.decode(errors='replace'))[-4000:]
 
     async def _stop(self):
+        if self.live:
+            await self.live.stop()
+            self.live = None
+        if self.studio.recorder.active:
+            await asyncio.to_thread(self.studio.recorder.stop)
         processes = list(dict.fromkeys([process for process in [self.process, *self.input_processes.values()] if process is not None]))
         self.process, self.input_processes = None, {}
         for process in processes:
@@ -500,6 +511,15 @@ class AudioEngine:
 
     async def _start(self, output, inputs=None):
         self.stderr = ''
+        enabled = self.studio.plan.settings['enabled']
+        if self.prepare_inputs and (enabled or self.live_prepared):
+            self.live_prepared = True
+            await self.prepare_inputs(enabled)
+            self.live_prepared = enabled
+        if self.studio.plan.settings['enabled']:
+            self.live = LiveAudio(self)
+            await self.live.start(output)
+            return
         if self.meter_card and output['mode'] == 'managed':
             self.meter = OutputMeter(self)
             await self.meter.start(output, self.meter_card)
@@ -528,6 +548,8 @@ class AudioEngine:
                 raise RuntimeError(f"Le lecteur audio s'est arrêté ({process.returncode}). {self.stderr.strip()[-800:]}")
 
     async def _apply_source_gain(self, address, gain, output):
+        if self.studio.plan.settings['enabled']:
+            return
         await self.command([executable('amixer'), '-c', output['card'], '--', 'sset', source_control(address), f'{gain:.1f}dB'], env=self.environment())
 
     async def configure_inputs(self, inputs):
@@ -545,87 +567,106 @@ class AudioEngine:
         return gain
 
     async def configure(self, output, current_master=None):
-        """Validate before interrupting audio; restore the old route if the probe fails."""
         async with self.lock:
-            selected, control = await self.normalize(output)
-            inputs = dict(self.inputs) if selected['mode'] == 'managed' else {}
-            route_keys = ('card', 'device', 'mode', 'pcm', 'control')
-            if self.snapshot()['applied'] and self.output is not None \
-                    and all(self.output.get(key) == selected.get(key) for key in route_keys) and set(inputs) == set(self.active_inputs):
-                if current_master is not None:
-                    settings = checked_settings(current_master, control['gain_max'])
-                    if settings != self.master:
-                        self.master = await self._apply_master(settings, selected, control)
-                self.output, self.control, self.error = selected, control, ''
-                return dict(selected)
-            if current_master is None and selected['mode'] == 'existing':
-                settings = await self._read_master(selected, control)
-            else:
-                settings = current_master if current_master is not None else self.master
-            settings = checked_settings(settings, control['gain_max'])
-            if await self.external_player_active():
-                raise RuntimeError('bluealsa-aplay.service possède déjà la sortie. Termine la migration du lecteur avec le script d’installation avant de choisir une sortie dans l’interface.')
-            previous_output, previous_control, previous_master = self.output, self.control, dict(self.master)
-            previous_inputs = dict(self.active_inputs)
-            previous_meter_card = self.meter_card
-            candidate = os.environ.get('BUREAU_METER_CARD', 'Loopback')
-            new_meter_card = candidate if selected['mode'] == 'managed' and CARD_RE.fullmatch(candidate) and candidate != selected['card'] and Path('/proc/asound', candidate, 'id').exists() else None
-            previous_config = self.config_path.read_text() if self.config_path.exists() else None
-            self.directory.mkdir(parents=True, exist_ok=True)
-            temporary = self.config_path.with_suffix('.tmp')
-            temporary.write_text(alsa_config(selected, inputs, new_meter_card))
-            temporary.chmod(0o600)
-            temporary.replace(self.config_path)
-            stopped = False
-            try:
-                # A hardware PCM may allow only one opener. Release our own
-                # player before the short test, then restore it on any failure.
-                self.applied = False
-                await self._stop()
-                stopped = True
-                self.meter_card = new_meter_card
-                if self.meter_card:
-                    await self.command([executable('aplay'), '-q', '-D', f"hw:CARD={selected['card']},DEV={selected['device']}",
-                                        '-t', 'raw', '-f', 'S16_LE', '-c', '2', '-r', '48000'],
-                                       input=b'\0' * 19200, env=self.environment())
-                pcm = selected['pcm'] if selected['mode'] == 'existing' else 'bureau_audio'
-                await self.command([executable('aplay'), '-q', '-D', pcm, '-t', 'raw', '-f', 'S16_LE',
+            return await self._configure(output, current_master)
+
+    async def _configure(self, output, current_master=None, rollback_plan=None, rollback_eq=None):
+        """Validate before interruption and restore the previous route on failure."""
+        selected, control = await self.normalize(output)
+        if self.studio.plan.settings['enabled'] and (selected['mode'] != 'managed' or selected['control'] != SOFTWARE_CONTROL):
+            raise ValueError('Le mode live nécessite une sortie gérée et le volume Bureau Audio Master.')
+        inputs = dict(self.inputs) if selected['mode'] == 'managed' else {}
+        route_keys = ('card', 'device', 'mode', 'pcm', 'control')
+        if self.active_topology == topology(self.studio.plan.settings) and self.snapshot()['applied'] and self.output is not None \
+                and all(self.output.get(key) == selected.get(key) for key in route_keys) and set(inputs) == set(self.active_inputs):
+            if current_master is not None:
+                settings = checked_settings(current_master, control['gain_max'])
+                if settings != self.master:
+                    self.master = await self._apply_master(settings, selected, control)
+            self.output, self.control, self.error = selected, control, ''
+            return dict(selected)
+        if current_master is None and selected['mode'] == 'existing':
+            settings = await self._read_master(selected, control)
+        else:
+            settings = current_master if current_master is not None else self.master
+        settings = checked_settings(settings, control['gain_max'])
+        if await self.external_player_active():
+            raise RuntimeError('bluealsa-aplay.service possède déjà la sortie. Termine la migration du lecteur avec le script d’installation avant de choisir une sortie dans l’interface.')
+        previous_output, previous_control, previous_master = self.output, self.control, dict(self.master)
+        previous_inputs = dict(self.active_inputs)
+        previous_meter_card = self.meter_card
+        previous_topology = self.active_topology
+        candidate = os.environ.get('BUREAU_METER_CARD', 'Loopback')
+        new_meter_card = candidate if not self.studio.plan.settings['enabled'] and selected['mode'] == 'managed' and CARD_RE.fullmatch(candidate) and candidate != selected['card'] and Path('/proc/asound', candidate, 'id').exists() else None
+        previous_config = self.config_path.read_text() if self.config_path.exists() else None
+        self.directory.mkdir(parents=True, exist_ok=True)
+        temporary = self.config_path.with_suffix('.tmp')
+        temporary.write_text(alsa_live_config(inputs) if self.studio.plan.settings['enabled'] else alsa_config(selected, inputs, new_meter_card))
+        temporary.chmod(0o600)
+        temporary.replace(self.config_path)
+        stopped = False
+        try:
+            # A hardware PCM may allow only one opener. Release our own
+            # player before the short test, then restore it on any failure.
+            self.applied = False
+            await self._stop()
+            stopped = True
+            self.meter_card = new_meter_card
+            if self.meter_card:
+                await self.command([executable('aplay'), '-q', '-D', f"hw:CARD={selected['card']},DEV={selected['device']}",
+                                    '-t', 'raw', '-f', 'S16_LE', '-c', '2', '-r', '48000'],
+                                   input=b'\0' * 19200, env=self.environment())
+            live_settings = self.studio.plan.settings
+            pcm = selected['pcm'] if live_settings['enabled'] or selected['mode'] == 'existing' else 'bureau_audio'
+            channels = live_settings['output_channels'] if live_settings['enabled'] else 2
+            format_name = 'S32_LE' if live_settings['enabled'] else 'S16_LE'
+            await self.command([executable('aplay'), '-q', '-D', pcm, '-t', 'raw', '-f', format_name,
+                                '-c', str(channels), '-r', '48000', *(['--disable-channels'] if live_settings['enabled'] else [])], input=b'\0' * (4800 * channels * (4 if live_settings['enabled'] else 2)),
+                               env=self.environment())
+            settings = await self._apply_master(settings, selected, control)
+            for address, gain in ({} if live_settings['enabled'] else inputs).items():
+                # Opening silence creates the ALSA control before its
+                # Bluetooth player starts, preventing a default-gain burst.
+                await self.command([executable('aplay'), '-q', '-D', source_pcm(address), '-t', 'raw', '-f', 'S16_LE',
                                     '-c', '2', '-r', '48000'], input=b'\0' * 19200, env=self.environment())
-                settings = await self._apply_master(settings, selected, control)
-                for address, gain in inputs.items():
-                    # Opening silence creates the ALSA control before its
-                    # Bluetooth player starts, preventing a default-gain burst.
-                    await self.command([executable('aplay'), '-q', '-D', source_pcm(address), '-t', 'raw', '-f', 'S16_LE',
-                                        '-c', '2', '-r', '48000'], input=b'\0' * 19200, env=self.environment())
-                    await self._apply_source_gain(address, gain, selected)
-                await self._start(selected, inputs)
-                self.active_inputs = inputs
-                self.output, self.control, self.master = selected, control, settings
-                self.master_known = True
-                self.applied, self.error = True, ''
-                return dict(selected)
-            except BaseException as error:
-                if previous_config is None:
-                    self.config_path.unlink(missing_ok=True)
-                else:
-                    self.config_path.write_text(previous_config)
-                    self.config_path.chmod(0o600)
-                if stopped:
-                    await self._stop()
-                    self.meter_card = previous_meter_card
-                    if previous_output:
-                        try:
-                            await self._apply_master(previous_master, previous_output, previous_control)
-                            for address, gain in previous_inputs.items():
-                                await self._apply_source_gain(address, gain, previous_output)
-                            await self._start(previous_output, previous_inputs)
-                            self.active_inputs = previous_inputs
-                            self.applied = True
-                        except Exception as rollback_error:
-                            self.applied = False
-                            self.error = f'Échec de la nouvelle sortie et de sa restauration : {rollback_error}'
-                self.error = self.error or str(error)
-                raise
+                await self._apply_source_gain(address, gain, selected)
+            self.master = settings
+            await self._start(selected, inputs)
+            self.active_inputs = inputs
+            self.output, self.control, self.master = selected, control, settings
+            self.master_known = True
+            self.applied, self.error = True, ''
+            self.active_topology = topology(self.studio.plan.settings)
+            return dict(selected)
+        except BaseException as error:
+            if rollback_plan is not None:
+                self.studio.plan = rollback_plan
+            if rollback_eq is not None:
+                self.equalizer = rollback_eq
+            self.output, self.control, self.master = previous_output, previous_control, previous_master
+            self.active_topology = previous_topology
+            if previous_config is None:
+                self.config_path.unlink(missing_ok=True)
+            else:
+                self.config_path.write_text(previous_config)
+                self.config_path.chmod(0o600)
+            if stopped:
+                await self._stop()
+                self.meter_card = previous_meter_card
+                if previous_output:
+                    try:
+                        await self._apply_master(previous_master, previous_output, previous_control)
+                        for address, gain in previous_inputs.items():
+                            await self._apply_source_gain(address, gain, previous_output)
+                        await self._start(previous_output, previous_inputs)
+                        self.active_inputs = previous_inputs
+                        self.applied = True
+                    except Exception as rollback_error:
+                        self.applied = False
+                        self.error = f'Échec de la nouvelle sortie et de sa restauration : {rollback_error}'
+            self.error = self.error or str(error)
+            raise
+
 
     async def set_master(self, settings):
         async with self.lock:
@@ -635,9 +676,59 @@ class AudioEngine:
             self.master = await self._apply_master(combined, self.output, self.control)
             return dict(self.master)
 
+    async def discover_captures(self):
+        try:
+            text = await self.command([executable('arecord'), '-l'])
+            self.studio.capture_choices = [v for v in parse_outputs(text) if v['card'] != 'Loopback']
+        except (OSError, RuntimeError):
+            self.studio.capture_choices = []
+        return self.studio.capture_choices
+
+    async def set_studio(self, settings, equalizer=None, master=None):
+        """Commit a complete validated plan, restoring route and state on error."""
+        plan = await asyncio.to_thread(StudioPlan, settings)
+        eq = await asyncio.to_thread(EqualizerPlan.create, equalizer) if equalizer is not None else self.equalizer
+        async with self.lock:
+            previous_plan, previous_eq = self.studio.plan, self.equalizer
+            previous_master = dict(self.master)
+            settings_master = checked_settings(master, self.control['gain_max'] if self.control else 4) if master is not None else previous_master
+            previous_data = dict(self.state.data)
+            old_revision, old_eq_revision = self.studio.revision, self.equalizer_revision
+            structural = topology(plan.settings) != topology(previous_plan.settings)
+            if self.studio.recorder.active and structural:
+                raise RuntimeError('Arrête l’enregistrement avant de changer les entrées ou le mode audio.')
+            if plan.settings['enabled'] and self.output is None and not previous_plan.settings['enabled']:
+                raise RuntimeError('Configure une sortie audio avant d’activer le mode live.')
+            self.studio.plan, self.equalizer = plan, eq
+            try:
+                if self.output and structural:
+                    await self._configure(self.output, settings_master, rollback_plan=previous_plan, rollback_eq=previous_eq)
+                elif self.output and settings_master != self.master:
+                    self.master = await self._apply_master(settings_master, self.output, self.control)
+                self.studio.revision += 1
+                if equalizer is not None:
+                    self.equalizer_revision += 1
+                self.state.data.update(studio=plan.settings, studio_revision=self.studio.revision)
+                if equalizer is not None:
+                    self.state.data.update(equalizer=eq.settings, equalizer_revision=self.equalizer_revision)
+                if master is not None:
+                    self.state.data['master'] = settings_master
+                self.state.save()
+            except BaseException:
+                changed_topology = self.active_topology != topology(previous_plan.settings)
+                self.studio.plan, self.equalizer = previous_plan, previous_eq
+                self.studio.revision, self.equalizer_revision = old_revision, old_eq_revision
+                self.state.data = previous_data
+                if self.output and changed_topology:
+                    await self._configure(self.output, previous_master)
+                elif self.output:
+                    self.master = await self._apply_master(previous_master, self.output, self.control)
+                raise
+        return self.studio.snapshot(self.equalizer_snapshot()['available'])
+
     def equalizer_snapshot(self):
-        available = bool(self.applied and self.meter and self.meter.running())
-        message = '' if available else 'L’EQ nécessite une sortie gérée et ALSA Loopback (snd-aloop).'
+        available = bool(self.applied and ((self.meter and self.meter.running()) or (self.live and self.live.running())))
+        message = '' if available else 'L’EQ nécessite une sortie gérée avec le moteur live actif ou ALSA Loopback (snd-aloop).'
         return {**self.equalizer.snapshot(available, message=message), 'revision': self.equalizer_revision}
 
     async def set_equalizer(self, changes):
@@ -646,7 +737,7 @@ class AudioEngine:
         async with self.lock:
             plan = await asyncio.to_thread(EqualizerPlan.create, {**self.equalizer.settings, **changes})
             if plan.settings['enabled'] and not self.equalizer_snapshot()['available']:
-                raise RuntimeError('L’EQ nécessite une sortie gérée disponible et ALSA Loopback (snd-aloop).')
+                raise RuntimeError('L’EQ nécessite une sortie gérée disponible avec le moteur live actif ou ALSA Loopback (snd-aloop).')
             previous = self.state.data.get('equalizer')
             previous_revision = self.state.data.get('equalizer_revision')
             self.state.data['equalizer'] = plan.settings
@@ -696,6 +787,9 @@ class AudioEngine:
             raise RuntimeError('Le contrôle audio ne fournit pas de niveau lisible.')
 
     async def poll(self):
+        if self.live and not self.live.running():
+            self.applied = False
+            self.error = self.live.error or self.stderr or 'Le moteur live est interrompu.'
         if self.meter and not self.meter.running():
             self.applied = False
             self.error = self.meter.error or 'La liaison de mesure audio est interrompue.'
@@ -710,6 +804,8 @@ class AudioEngine:
     def snapshot(self):
         running = bool(self.process is not None and self.process.returncode is None and all(process.returncode is None for process in self.input_processes.values()))
         running = running and (self.meter is None or self.meter.running())
+        if self.live:
+            running = self.live.running()
         return {'output': dict(self.output) if self.output else None, 'output_choices': self.output_choices,
                 'applied': self.applied and running, 'running': running,
                 'message': self.error or ('Lecteur audio prêt' if self.applied and running else 'Choisis une sortie audio'),
@@ -720,8 +816,10 @@ class AudioEngine:
         return self.snapshot()['applied'] and address in self.active_inputs
 
     def levels(self):
+        if self.live:
+            return {**self.live.snapshot(), 'studio': self.studio.snapshot(self.applied)['meters']}
         if self.meter:
-            return self.meter.snapshot()
+            return {**self.meter.snapshot(), 'studio': self.studio.snapshot(self.applied)['meters']}
         return {'available': False, 'demo': False, 'left': 0, 'right': 0,
                 'clip_left': False, 'clip_right': False,
                 'message': 'La mesure stéréo nécessite la carte ALSA Loopback (snd-aloop) et une sortie gérée.'}
@@ -729,4 +827,5 @@ class AudioEngine:
     async def close(self):
         async with self.lock:
             await self._stop()
+            await asyncio.to_thread(self.studio.recorder.stop)
             self.applied = False

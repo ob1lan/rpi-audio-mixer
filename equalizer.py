@@ -192,6 +192,18 @@ class EqualizerProcessor:
         if not data:
             return data
         samples = np.frombuffer(data, dtype='<i2').reshape(-1, 2).astype(np.float64) / 32768
+        output = self.process_float(samples, plan)
+        quantized = np.clip(np.rint(output * 32768), -32768, 32767).astype('<i2')
+        self._spectrum(quantized.astype(np.float64) / 32768)
+        if np.array_equal(output, samples):
+            return data
+        return quantized.tobytes()
+
+    def process_float(self, samples, plan):
+        """Keep headroom until the final DAC conversion in the multibus mixer."""
+        np = self.np
+        if not len(samples):
+            return samples
         if plan.settings != self.current['plan'].settings and self.previous is None:
             self.previous, self.current = self.current, self._chain(plan)
             if len(self.history):
@@ -206,14 +218,7 @@ class EqualizerProcessor:
             if self.fade_position >= 1920:
                 self.previous = None
         self.history = np.concatenate((self.history, samples))[-8192:]
-        quantized = np.clip(np.rint(output * 32768), -32768, 32767).astype('<i2')
-        self._spectrum(quantized.astype(np.float64) / 32768)
-        if self.current['plan'].flat and self.previous is None and plan.settings == self.current['plan'].settings:
-            # Preserve the exact input bytes in steady bypass/flat mode. A block
-            # that contained a transition must still use its blended output.
-            if np.array_equal(output, samples):
-                return data
-        return quantized.tobytes()
+        return output
 
     def _spectrum(self, output):
         np = self.np

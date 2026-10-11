@@ -81,6 +81,13 @@ function fixture() {
     settle:async () => { for (let i=0; i<8; i++) await Promise.resolve(); }};
 }
 
+test("live negative gain readout and rotary position use both range limits", () => {
+  const f=fixture();f.gain.min="-24";f.gain.max="24";
+  f.controls.range(f.gain,f.output,-12,"source"," dB");
+  assert.equal(f.output.textContent,"-12.0 dB");
+  assert.equal(f.gain.knob.style.get("--rotation"),"-67.5deg");
+});
+
 test("gain touch starts at its current value and ignores horizontal finger drift", async () => {
   const f = fixture();
   assert.equal(pointer(f.gain, "pointerdown").defaultPrevented, true);

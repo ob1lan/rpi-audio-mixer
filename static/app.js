@@ -50,7 +50,7 @@ window.addEventListener("pointerup", endDrag);
 window.addEventListener("pointercancel", endDrag);
 $("bank-prev").addEventListener("click", () => { channelBank--; scheduleLayout(); });
 $("bank-next").addEventListener("click", () => { channelBank++; scheduleLayout(); });
-for (const [panelId, buttonId] of [["receivers-panel", "open-receivers"], ["configuration-panel", "open-configuration"], ["equalizer-panel", "open-equalizer"]]) {
+for (const [panelId, buttonId] of [["studio-panel", "open-studio"], ["receivers-panel", "open-receivers"], ["configuration-panel", "open-configuration"], ["equalizer-panel", "open-equalizer"]]) {
   const panel = $(panelId);
   $(buttonId).addEventListener("click", () => panel.showModal());
   panel.querySelector(".dialog-close").addEventListener("click", () => panel.close());
@@ -97,7 +97,7 @@ function progress(slider) {
   else {
     const card = slider.closest(".channel-strip");
     if (slider.classList.contains("device-gain")) {
-      card.querySelector(".source-knob").style.setProperty("--rotation", `${-135 + Number(slider.value) / Math.max(.1, Number(slider.max)) * 270}deg`);
+      card.querySelector(".source-knob").style.setProperty("--rotation", `${-135 + (Number(slider.value)-Number(slider.min)) / Math.max(.1, Number(slider.max)-Number(slider.min)) * 270}deg`);
     }
     if (slider.id === "master-volume" || slider.id === "master-volume-right") {
       const other = $(slider.id === "master-volume" ? "master-volume-right" : "master-volume");
@@ -116,7 +116,7 @@ function isBusy(key, slider) {
 function range(slider, output, value, key, suffix=" %") {
   if (!isBusy(key, slider)) slider.value = value ?? 0;
   progress(slider);
-  output.textContent = value === null ? "—" : (suffix === " dB" ? `+${Number(slider.value).toFixed(1)}` : slider.value) + suffix;
+  output.textContent = value === null ? "—" : (suffix === " dB" ? `${Number(slider.value)>=0?"+":""}${Number(slider.value).toFixed(1)}` : slider.value) + suffix;
   slider.setAttribute("aria-valuetext", output.textContent);
 }
 function sendQueued(key, path, body) {
@@ -144,7 +144,7 @@ function sliderEvents(slider, output, key, path, getBody, suffix=" %") {
   slider.addEventListener("pointerdown", event => { if (!slider.disabled) dragging.add(event.pointerId); });
   slider.addEventListener("input", () => {
     progress(slider);
-    output.textContent = suffix === " dB" ? `+${Number(slider.value).toFixed(1)} dB` : `${slider.value} %`;
+    output.textContent = suffix === " dB" ? `${Number(slider.value)>=0?"+":""}${Number(slider.value).toFixed(1)} dB` : `${slider.value} %`;
     slider.setAttribute("aria-valuetext", output.textContent);
     updateGainButtons(slider);
     sendQueued(key, path, getBody(Number(slider.value)));
@@ -427,6 +427,7 @@ function render(data) {
   renderRoutes(data);
   renderConfiguration(data);
   equalizerEditor.receive(data.equalizer);
+  studioEditor.receive(data);
   const gainMax = Math.max(0, Number(data.master.gain_max ?? data.gain_max ?? data.configuration?.output?.gain_max ?? 0));
   $("master-gain").max = String(gainMax);
   $("master-gain-max").textContent = `+${gainMax.toLocaleString("fr-FR")} dB`;
@@ -484,6 +485,7 @@ function render(data) {
     card.querySelector(".channel-number").textContent = String(index + 1).padStart(2,"0");
     card.querySelector(".footer-channel-number").textContent = String(index + 1);
     card.querySelector(".route-label").textContent = device.receiver;
+    card.querySelector(".device-gain").min = data.studio?.settings.enabled ? "-24" : "0";
     card.querySelector(".device-name").textContent = device.name;
     card.querySelector(".device-name").title = device.remote_name;
     const receiver = data.adapters.find(a => a.address === device.adapter);
@@ -505,6 +507,10 @@ function render(data) {
     slider.setAttribute("aria-label", `Volume de ${device.name}`);
     knob.setAttribute("aria-label", `Gain de ${device.name}`);
     knob.max = String(device.gain_max || 0);
+    knob.min = device.gain_max === 24 ? "-24" : "0";
+    const ends = card.querySelector(".source-gain-control .range-ends");
+    ends.firstElementChild.textContent = `${knob.min} dB`;
+    ends.lastElementChild.textContent = `+${knob.max} dB`;
     card.querySelector(".source-gain-control").hidden = !device.gain_max;
     card.querySelector(".source-no-gain").hidden = !!device.gain_max;
     card.querySelector(".fader-well label").textContent = `Volume de ${device.name}`;
@@ -580,6 +586,7 @@ const equalizerEditor = createEqualizerEditor({
   onState:data => { state = data; if (authenticated) render(state); },
   getLevels:() => meterData && performance.now() - meterFetched < 600 ? meterData : null
 });
+const studioEditor = createStudioEditor({api, onState:data => { state = data; if (authenticated) render(state); }, toast});
 poll();
 setInterval(() => { if (authenticated) poll(); }, 2000);
 
@@ -588,7 +595,7 @@ const heldPeak = {left:-100, right:-100}, heldUntil = {left:0, right:0}, clipUnt
 async function pollLevels() {
   if (!authenticated || document.hidden || meterPolling) return;
   meterPolling = true;
-  try { meterData = await api("/api/levels"); meterFetched = performance.now(); }
+  try { meterData = await api("/api/levels"); meterFetched = performance.now(); studioEditor.telemetry(meterData.studio, meterData); }
   catch { meterData = null; }
   finally { meterPolling = false; }
 }

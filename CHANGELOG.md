@@ -1,5 +1,14 @@
 # Changements
 
+## Modules audio — 11 octobre 2026
+
+- Moteur live flottant : capture USB multicanal et Bluetooth séparée, quatre bus stéréo et paires de sorties distinctes.
+- Matrice pré/post-fader, exclusion mix-minus, casque PFL indépendant, EQ visuel et dynamique par entrée/bus, gate, automix et ducking.
+- Compresseur et limiteur Master, FBQ assisté et balance ; automatisation live explicitement expérimentale.
+- Scènes persistantes avec import/export et restauration après échec ; enregistrement WAV borné, finalisation et téléchargement authentifié.
+- Panneau Modules, brouillons protégés contre les anciennes révisions, télémétrie et gestion des coupures USB.
+- Scripts de déploiement et tests étendus ; validation acoustique et de latence sur Pi 4B avec l’interface future encore à faire.
+
 ## EQ MASTER
 
 - Égaliseur paramétrique stéréo à six bandes : courbe interactive, cloches et plateaux, passe-haut/passe-bas, préampli et compensation des boosts.

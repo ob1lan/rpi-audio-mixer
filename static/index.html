@@ -10,6 +10,7 @@
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/equalizer.js" defer></script>
+  <script src="/static/studio.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -28,7 +29,15 @@
   <div id="dashboard" hidden>
     <div id="demo-banner" class="banner" hidden>APERÇU SIMULÉ · Ces réglages ne contrôlent aucun appareil.</div>
     <div id="errors" class="error-box" role="status" hidden></div>
-    <div class="desk-toolbar"><span class="desk-model">BA / MIX <span>BLUETOOTH MIXING CONSOLE</span></span><div><button id="open-equalizer" class="secondary" type="button" aria-haspopup="dialog">EQ · MASTER</button><button id="open-receivers" class="secondary" type="button" aria-haspopup="dialog">Bluetooth et appareils</button><button id="open-configuration" class="secondary" type="button" aria-haspopup="dialog">Sortie audio</button></div></div>
+    <div class="desk-toolbar"><span class="desk-model">BA / MIX <span>BLUETOOTH MIXING CONSOLE</span></span><div><button id="open-studio" class="secondary" type="button" aria-haspopup="dialog">Modules · LIVE</button><button id="open-equalizer" class="secondary" type="button" aria-haspopup="dialog">EQ · MASTER</button><button id="open-receivers" class="secondary" type="button" aria-haspopup="dialog">Bluetooth et appareils</button><button id="open-configuration" class="secondary" type="button" aria-haspopup="dialog">Sortie audio</button></div></div>
+    <dialog id="studio-panel" class="settings-panel studio-panel" aria-labelledby="studio-title">
+      <header class="settings-heading"><div><span class="eyebrow">TRAITEMENTS ET ROUTAGE</span><h2 id="studio-title">Modules audio</h2><span id="studio-status" class="small" role="status"></span></div><button class="dialog-close secondary" type="button" aria-label="Fermer les modules">Fermer ×</button></header>
+      <nav class="studio-tabs" aria-label="Modules audio"><button type="button" data-studio-tab="master">Master / FBQ</button><button type="button" data-studio-tab="hardware">Interface USB</button><button type="button" data-studio-tab="inputs">Entrées</button><button type="button" data-studio-tab="matrix">Matrice</button><button type="button" data-studio-tab="buses">Bus</button><button type="button" data-studio-tab="scenes">Scènes</button><button type="button" data-studio-tab="recording">Enregistrement</button></nav>
+      <p id="studio-levels" class="small studio-levels" aria-live="off"></p>
+      <p id="studio-health" class="small" aria-live="polite"></p>
+      <div id="studio-content"></div>
+      <div class="studio-save"><span id="studio-save-status" class="small" role="status"></span><button id="studio-reset" class="secondary" type="button">Recharger · annuler les modifications</button><button id="studio-apply" class="primary" type="button">Appliquer les modifications</button></div>
+    </dialog>
     <dialog id="equalizer-panel" class="settings-panel equalizer-panel" aria-labelledby="equalizer-title">
       <header class="settings-heading"><div><span class="eyebrow">TRAITEMENT STÉRÉO · L / R LIÉS</span><h2 id="equalizer-title">Égaliseur paramétrique</h2><span id="eq-status" class="small" role="status"></span></div><button class="dialog-close secondary" type="button" aria-label="Fermer l’égaliseur">Fermer ×</button></header>
       <div class="eq-toolbar">

@@ -1,4 +1,18 @@
-# EQ MASTER — 11 octobre 2026
+# Modules audio — 11 octobre 2026
+
+- 189 tests Python réussis avec Python 3.9.6, dont 38 tests de modules et un test supplémentaire des MUTE/SOLO BlueALSA en capture brute. Somme flottante, limiteur, compresseur lié, EQ d’entrée/bus, gate, automix, ducking, PFL indépendant, mix-minus et MUTE sans résidu de filtres vérifiés sur des signaux numériques.
+- Tests des vraies boucles asynchrones de capture/lecture avec des pipes simulés : trames S32 multicanal, négociation sans conversion de canaux, coupure USB, blocage de sortie, annulation d’un bloc DSP et récupération des enfants. Dérive fractionnaire et bornes des tampons contrôlées. Aucun périphérique ALSA réel n’a été ouvert sur le Mac.
+- FBQ : suggestion sur une tonalité persistante, absence de pose live sur une note stable, pose sur une tonalité croissante, expiration des filtres live, filtres fixes et banque de balance distincte. Ces essais synthétiques ne valident pas l’efficacité acoustique ni le taux de faux positifs.
+- Scènes : sauvegarde/rappel/import/export/suppression, restauration Master/source, gains live étendus, révisions périmées, validation, erreur de disque et retour au mode classique. Échec du démarrage live avec restauration du moteur et de l’EQ précédents. Préparation du PCM brut après l’arrêt des anciens lecteurs ; bits MUTE BlueALSA retirés pour le PFL et restaurés au retour au mode classique.
+- Enregistrement : fichier WAV réel avec en-tête finalisé et échantillons attendus, refus faute d’espace, file bornée avec arrêt explicite en cas de saturation. L’aperçu refuse d’inventer un enregistrement. API de modules, exports et téléchargements authentifiés.
+- 26 tests JavaScript réussis avec Node 24. En plus de l’EQ et des gestes tactiles : brouillon conservé pendant le polling et après erreur, saisie du nom d’une scène, protection contre la perte d’un brouillon, numérotation des canaux USB, validation des nombres, enregistrement indépendant du brouillon, gain négatif et rotation du bouton.
+- Inspection réelle dans Safari sur ordinateur : panneaux Master/FBQ, matrice, interface USB et enregistrement lisibles et défilants ; sauvegarde de la scène « Validation locale », apparition de Rappeler/Exporter et état sauvegardé vérifiés. La tentative d’inspection mobile en conception adaptative a été interrompue par un changement de fenêtre ; aucune validation visuelle mobile complète n’est revendiquée.
+- Syntaxes Python/JavaScript/shell et `git diff --check` réussis. Installation, bootstrap et mise à jour incluent les nouveaux modules et sont couverts par la suite simulée. Workflow CI complété pour le JavaScript du panneau.
+- Mesure indicative sur le Mac : environ 0,58 ms par bloc de 10 ms, avec quatre micros, EQ/dynamique, automix et FBQ assisté. Cette mesure ne prédit pas les performances du Raspberry Pi.
+
+Le Pi **4B** est la cible communiquée. Les micros et l’interface USB de type Focusrite ne sont pas encore disponibles. Restent à vérifier sur le matériel choisi : exposition ALSA des canaux, duplex 48 kHz, correspondance des sorties/casque, latence réelle, stabilité et charge sur une session prolongée, ainsi que FBQ avec enceintes, parole et musique. Le mode live est désactivé par défaut et le FBQ live est présenté comme expérimental. Le guide figure dans le README.
+
+# EQ MASTER initial — 11 octobre 2026
 
 - 150 tests Python réussis, dont 17 tests EQ : réponses mesurées sur des sinusoïdes, filtres de coupure, plateaux, stabilité, indépendance des canaux, continuité entre blocs, compensation de bandes superposées, saturation sans débordement entier et retour exact des octets en bypass après transition.
 - Intégration : les octets filtrés traversent le transfert Loopback et alimentent le vumètre ; la configuration ne relance pas les lecteurs. Activation refusée sur une route indisponible, sauvegarde et restauration après erreur de disque, persistance après rechargement et API authentifiée vérifiées sans matériel.
@@ -7,7 +21,7 @@
 - Tests locaux avec Python 3.9.6 et Node 24. Syntaxes Python/JavaScript/shell et `git diff --check` vérifiés. Scripts d’installation, téléchargement et mise à jour testés dans des environnements simulés ; NumPy/SciPy et les nouveaux modules sont inclus.
 - Mesure indicative sur le Mac : environ 0,30 ms par bloc audio de 40 ms, six bandes actives et analyse spectrale. Cette mesure ne constitue pas un résultat sur Raspberry Pi.
 
-L’écoute, la charge CPU, la stabilité ALSA et les gestes sur une tablette physique restent à valider sur le Pi cible. La route actuelle conserve ses périodes de 40 ms et ses tampons de 200 ms ; cette extension n’ajoute pas de capture micro ni d’anti-larsen.
+À ce stade initial de l’EQ, l’écoute, la charge CPU, la stabilité ALSA et les gestes sur une tablette physique restaient à valider sur le Pi cible. La route classique conserve ses périodes de 40 ms et ses tampons de 200 ms. Les modules décrits plus haut ajoutent désormais la capture micro et le FBQ expérimental.
 
 # Vérification de la version 3.0
 

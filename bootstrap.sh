@@ -60,7 +60,7 @@ with tarfile.open(sys.argv[1]) as archive:
 PY
 mkdir "$work/repo"
 tar -xzf "$work/repo.tar.gz" -C "$work/repo" --strip-components=1 --no-same-owner
-for file in install.sh configure.py prepare-bluealsa.sh app.py audio.py equalizer.py static/equalizer.js; do
+for file in install.sh configure.py prepare-bluealsa.sh app.py audio.py equalizer.py studio.py live_audio.py modules.py static/equalizer.js static/studio.js; do
   [ -f "$work/repo/$file" ] || { echo "Incomplete repository: $file" >&2; exit 1; }
 done
 # The application never needs the repository credential.

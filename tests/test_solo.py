@@ -25,6 +25,27 @@ class SoloAudioTests(unittest.IsolatedAsyncioTestCase):
     def source(self, address):
         return next(v for v in self.pi.snapshot()['devices'] if v['address'] == address)
 
+    async def test_live_raw_capture_clears_bluealsa_mute_but_preserves_dsp_controls(self):
+        from studio import StudioPlan
+        await self.pi.set_device(WORK, {'muted': True})
+        await self.pi.set_device(PHONE, {'solo': True})
+        settings = self.pi.modules.source_settings(); settings['enabled'] = True
+        self.pi.modules.studio.install(StudioPlan(settings))
+        await self.pi.prepare_live_volumes(True)
+        self.assertFalse(any(decode_volume(self.pi.pcms[path]['Volume'])[1] for path in (P, Q, S)))
+        self.assertFalse(any(self.pi.pcms[path]['SoftVolume'] for path in (P, Q, S)))
+        self.assertTrue(self.source(WORK)['muted'])
+        self.assertTrue(self.source(PHONE)['solo'])
+        self.assertTrue(self.source(WORK)['solo_suppressed'])
+        settings['enabled'] = False; self.pi.modules.studio.install(StudioPlan(settings))
+        await self.pi.prepare_live_volumes(False)
+        self.assertTrue(self.pi.pcms[Q]['SoftVolume'])
+        self.assertTrue(decode_volume(self.pi.pcms[Q]['Volume'])[1])
+        self.assertTrue(self.source(WORK)['muted'])
+        await self.pi.set_device(PHONE, {'solo': False})
+        self.assertEqual(self.pi.pcms[S]['Volume'], 0x3030)
+        self.assertTrue(decode_volume(self.pi.pcms[Q]['Volume'])[1])
+
     async def test_multiple_solos_silence_only_other_sources_and_restore_levels(self):
         await self.pi.set_device(PHONE, {'solo': True})
         self.assertEqual(self.pi.pcms[P]['Volume'], 0x7F7F)

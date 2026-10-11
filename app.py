@@ -21,6 +21,8 @@ from dbus_next.aio import MessageBus
 from dbus_next.service import ServiceInterface, method
 from audio import AudioEngine, SOURCE_GAIN_MAX
 from equalizer import EqualizerPlan
+from studio import Studio, input_defaults
+from modules import Modules
 
 ROOT = Path(__file__).resolve().parent
 PROPERTIES = 'org.freedesktop.DBus.Properties'
@@ -328,6 +330,9 @@ class PiBackend(SourceRegistry):
         self.init_registry(state, routing_config(routing if routing is not None else json.loads(config_path.read_text())))
         self.adapters, self.devices, self.pcms = {}, {}, {}
         self.audio_engine = AudioEngine(state)
+        self.modules = Modules(self, self.audio_engine.studio)
+        self.live_pcm_volumes = {}
+        self.audio_engine.prepare_inputs = self.prepare_live_volumes
         self.output_choices, self.output_diagnostics = [], []
         self.output = state.data.get('output')
         self.card = os.environ.get('BUREAU_CARD')
@@ -576,6 +581,12 @@ class PiBackend(SourceRegistry):
                 self.pcms = {}
                 self.errors.append('Audio Bluetooth : ' + str(exc))
             try:
+                if self.modules.studio.plan.settings['enabled'] and set(self.sources) - set(self.modules.studio.plan.settings['inputs']):
+                    await self.modules.commit(self.modules.source_settings())
+                pending = self.state.data.get('scene_pending', {})
+                if pending and any(props.get('Device', '').endswith('/dev_' + address.replace(':', '_'))
+                                   for address in pending for props in self.pcms.values()):
+                    await self.restore_scene_sources(pending)
                 await self.apply_solo()
             except Exception as exc:
                 self.errors.append('SOLO : ' + str(exc))
@@ -587,6 +598,8 @@ class PiBackend(SourceRegistry):
             await self.audio_engine.configure_inputs({a: v.get('gain', 0) for a, v in self.sources.items()})
             if not self.last_audio_discovery or time.monotonic() - self.last_audio_discovery > 15:
                 self.output_choices = await self.audio_engine.discover()
+                if hasattr(self.audio_engine, 'discover_captures'):
+                    await self.audio_engine.discover_captures()
                 self.last_audio_discovery = time.monotonic()
             # L’ancienne route personnalisée reste disponible pour la migration.
             if self.output and self.output.get('mode') == 'existing':
@@ -698,6 +711,66 @@ class PiBackend(SourceRegistry):
         async with self.lock:
             await self.audio_engine.set_equalizer(changes)
 
+    async def prepare_live_volumes(self, enabled):
+        for path, props in self.pcms.items():
+            spec = next((item for address, item in self.sources.items()
+                         if props.get('Device', '').endswith('/dev_' + address.replace(':', '_'))), None)
+            if not spec:
+                continue
+            target = props['Volume']
+            if 'solo_mutes' in spec:
+                target = restore_mutes(target, spec['solo_mutes'])
+            if enabled:
+                if path not in self.live_pcm_volumes:
+                    self.live_pcm_volumes[path] = target
+                # SoftVolume=False still leaves BlueALSA mute bits effective.
+                target = encode_volume(target, muted=False)
+            if not enabled:
+                item = self.modules.studio.plan.settings['inputs'].get(spec['address'])
+                if item:
+                    target = encode_volume(target, item['volume'], item['muted'])
+                    spec['solo'] = item['solo']
+                else:
+                    target = self.live_pcm_volumes.get(path, target)
+            if target != props['Volume']:
+                await self.set_property('org.bluealsa', path, PCM, 'Volume', 'q' if isinstance(target, int) else 'ay', target)
+                props['Volume'] = target
+            if props.get('SoftVolume') != (not enabled):
+                await self.set_property('org.bluealsa', path, PCM, 'SoftVolume', 'b', not enabled)
+                props['SoftVolume'] = not enabled
+            if enabled and 'solo_mutes' in spec:
+                del spec['solo_mutes']
+                self.save_registry()
+        if not enabled:
+            self.live_pcm_volumes.clear()
+            if not self.modules.studio.plan.settings['enabled']:
+                await self.apply_solo()
+
+    async def restore_scene_sources(self, controls):
+        pending = {}
+        for address, changes in controls.items():
+            if address not in self.sources:
+                continue
+            spec = self.sources[address]
+            spec['solo'] = changes.get('solo', False)
+            spec['gain'] = max(0, min(SOURCE_GAIN_MAX, changes.get('gain', 0)))
+            if self.modules.studio.plan.settings['enabled']:
+                continue
+            matching = [(path, props) for path, props in self.pcms.items()
+                        if props.get('Device', '').endswith('/dev_' + address.replace(':', '_'))]
+            if not matching:
+                pending[address] = changes
+            for path, props in matching:
+                target = encode_volume(props['Volume'], changes.get('volume'), changes.get('muted'))
+                await self.set_property('org.bluealsa', path, PCM, 'SoftVolume', 'b', True)
+                await self.set_property('org.bluealsa', path, PCM, 'Volume', 'q' if isinstance(target, int) else 'ay', target)
+                props['Volume'], props['SoftVolume'] = target, True
+            if self.audio_engine.source_gain_ready(address):
+                await self.audio_engine.set_source_gain(address, spec['gain'])
+        self.state.data['scene_pending'] = pending
+        self.save_registry()
+        await self.apply_solo()
+
     def desired_path(self, address):
         address = bt_address(address)
         if address not in self.routes:
@@ -716,6 +789,9 @@ class PiBackend(SourceRegistry):
 
     async def apply_solo(self):
         """Solo is a software mute overlay, independent from the user's MUTE."""
+        if self.modules.studio.plan.settings['enabled']:
+            await self.prepare_live_volumes(True)
+            return
         selected = any(v.get('solo', False) for v in self.sources.values())
         for address, spec in {**self.sources, **self.retired}.items():
             adapter = self.adapters.get(spec['adapter'])
@@ -753,6 +829,11 @@ class PiBackend(SourceRegistry):
         async with self.lock:
             if address not in self.sources:
                 raise ValueError('Appareil inconnu.')
+            if self.modules.studio.plan.settings['enabled']:
+                settings = self.modules.source_settings()
+                settings['inputs'][address].update(changes)
+                await self.modules.commit(settings)
+                return
             if 'solo' in changes:
                 boolean(changes['solo'])
             matching = []
@@ -885,21 +966,26 @@ class PiBackend(SourceRegistry):
             volume, muted = decode_volume(stream['Volume']) if stream else (None, False)
             if 'solo_mutes' in spec:
                 muted = all(spec['solo_mutes'])
+            live_input = self.modules.studio.plan.settings['inputs'].get(address) if self.modules.studio.plan.settings['enabled'] else None
+            if live_input:
+                volume, muted = live_input['volume'], live_input['muted']
             devices.append({**{k: v for k, v in spec.items() if k != 'solo_mutes'}, **self.solo_state(address), 'name': self.source_name(address),
                             'receiver': self.specs[spec['adapter']]['short_label'],
                             'remote_name': self.source_name(address),
                             'receiver_present': bool(receiver), 'connected': bool(props.get('Connected')),
                             'paired': bool(props.get('Paired')), 'trusted': bool(props.get('Trusted')),
                             'connecting': address in self.connecting, 'volume': volume, 'muted': muted,
-                            'gain': spec.get('gain', 0), 'gain_max': SOURCE_GAIN_MAX if self.output and self.output.get('mode') == 'managed' else 0,
+                            'gain': live_input['gain'] if live_input else spec.get('gain', 0), 'gain_max': 24 if live_input else SOURCE_GAIN_MAX if self.output and self.output.get('mode') == 'managed' else 0,
                             'gain_ready': self.master_ready and self.audio_engine.source_gain_ready(address),
                             'playing': bool(stream and stream.get('Running')), 'codec': stream.get('Codec') if stream else None,
                             'channels': stream.get('Channels') if stream else None,
-                            'sampling': stream.get('Rate', stream.get('Sampling')) if stream else None})
+                            'sampling': stream.get('Rate', stream.get('Sampling')) if stream else None,
+                            **self.modules.device_overlay(address)})
         retired = [{**spec, 'name': self.source_name(address),
                     'connected': any(p.get('Connected') for p in self.devices.values() if p.get('Address', '').upper() == address)}
                    for address, spec in self.retired.items()]
         return {'demo': False, 'version': VERSION, 'bluetooth': any(v['powered'] for v in adapters),
+                'studio': self.modules.snapshot(),
                 'equalizer': self.audio_engine.equalizer_snapshot(),
                 'adapters': adapters, 'master': dict(self.master), 'master_ready': self.master_ready,
                 'gain_max': self.gain_max, 'devices': devices, 'retired_devices': retired, 'errors': list(self.errors),
@@ -911,6 +997,7 @@ class PiBackend(SourceRegistry):
 class DemoBackend(SourceRegistry):
     """Simulation explicite, sans accès au Bluetooth ni au son de l'ordinateur."""
     def __init__(self, state):
+        self.lock = asyncio.Lock()
         self.master = state.data.get('master', {'volume': 78, 'gain': 1.2, 'muted': False})
         self.equalizer = EqualizerPlan.create(state.data.get('equalizer', {}))
         self.equalizer_revision = state.data.get('equalizer_revision', 0)
@@ -952,9 +1039,11 @@ class DemoBackend(SourceRegistry):
         self.gain_max = next(v['gain_max'] for v in choice['controls'] if v['name'] == self.output['control'])
         self.master = {**self.master, 'gain': min(self.master['gain'], self.gain_max)}
         self.output['gain_max'] = self.gain_max
+        self.modules = Modules(self, Studio(state), demo=True)
+        self.modules.studio.capture_choices = [{'card': 'DemoUSB', 'device': 0, 'name': 'Interface USB simulée'}]
 
     async def start(self): pass
-    async def close(self): pass
+    async def close(self): await asyncio.to_thread(self.modules.studio.recorder.stop)
     async def refresh(self): pass
 
     async def set_equalizer(self, changes):
@@ -1017,8 +1106,23 @@ class DemoBackend(SourceRegistry):
     def find(self, address):
         return next((v for v in self.devices if v['address'] == bt_address(address)), None)
 
+    async def restore_scene_sources(self, controls):
+        for address, changes in controls.items():
+            device = self.find(address)
+            if device:
+                device.update(changes)
+                self.sources[address]['solo'] = changes.get('solo', False)
+                self.sources[address]['gain'] = max(0, min(4, changes.get('gain', 0)))
+        self.save_registry()
+
     async def set_device(self, address, changes):
         device = self.find(address)
+        if self.modules.studio.plan.settings['enabled'] and device:
+            settings = self.modules.source_settings()
+            settings['inputs'][bt_address(address)].update(changes)
+            await self.modules.commit(settings)
+            device.update(changes)
+            return
         if not device or (device['volume'] is None and set(changes) & {'volume', 'muted'}):
             raise ValueError('Flux audio indisponible.')
         if 'gain' in changes:
@@ -1072,11 +1176,12 @@ class DemoBackend(SourceRegistry):
 
     def snapshot(self):
         return {'demo': True, 'version': VERSION, 'bluetooth': True,
+                'studio': self.modules.snapshot(),
                 'equalizer': {**self.equalizer.snapshot(self.master_ready, demo=True), 'revision': self.equalizer_revision},
                 'adapters': [{**v, 'pairing_seconds': max(0, math.ceil(self.deadlines.get(v['address'], 0) - time.monotonic()))}
                              for v in self.adapters], 'master': dict(self.master), 'master_ready': self.master_ready,
                 'gain_max': self.gain_max, 'devices': [{**v, **self.solo_state(v['address']), 'gain': v.get('gain', 0), 'gain_max': SOURCE_GAIN_MAX,
-                                                      'gain_ready': self.master_ready} for v in self.devices],
+                                                      'gain_ready': self.master_ready, **self.modules.device_overlay(v['address'])} for v in self.devices],
                 'retired_devices': [{**v, 'name': self.source_name(a), 'connected': False} for a, v in self.retired.items()], 'errors': [],
                 'configuration': {'output': self.output, 'output_choices': self.output_choices, 'configured': self.master_ready,
                                   'diagnostics': [], 'audio_status': {'applied': self.master_ready,
@@ -1087,8 +1192,9 @@ class DemoBackend(SourceRegistry):
         t = time.monotonic()
         levels = [0.0, 0.0]
         if self.master_ready and not self.master['muted']:
-            for i, device in enumerate(self.devices):
-                if device['playing'] and device['connected'] and not device['muted'] and not self.solo_state(device['address'])['solo_suppressed']:
+            for i, raw in enumerate(self.devices):
+                device = {**raw, **self.solo_state(raw['address']), **self.modules.device_overlay(raw['address'])}
+                if device['playing'] and device['connected'] and not device['muted'] and not device['solo_suppressed']:
                     amplitude = (device['volume'] or 0) / 100 * 10 ** (device.get('gain', 0) / 20)
                     for channel in (0, 1):
                         levels[channel] += amplitude * (.15 + .28 * (1 + math.sin(t * (3.1 + i * .7) + channel * .8 + i)) / 2)
@@ -1138,7 +1244,7 @@ def create_app(backend, access_key):
         result.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         return result
 
-    app = web.Application(middlewares=[protection], client_max_size=4096)
+    app = web.Application(middlewares=[protection], client_max_size=262144)
 
     async def login(request):
         address = request.remote or 'local'
@@ -1185,6 +1291,8 @@ def create_app(backend, access_key):
             await backend.set_master(data)
         elif section == 'equalizer':
             await backend.set_equalizer(data)
+        elif section == 'studio':
+            await backend.modules.action(data)
         elif section == 'pairing':
             if set(data) != {'enabled', 'adapter'}:
                 raise ValueError('Récepteur et état d’appairage attendus.')
@@ -1217,7 +1325,8 @@ def create_app(backend, access_key):
                 if 'volume' in changes:
                     number(changes['volume'], 0, 100)
                 if 'gain' in changes:
-                    number(changes['gain'], 0, SOURCE_GAIN_MAX)
+                    live = backend.modules.studio.plan.settings['enabled']
+                    number(changes['gain'], -24 if live else 0, 24 if live else SOURCE_GAIN_MAX)
                 if 'muted' in changes:
                     boolean(changes['muted'])
                 if 'solo' in changes:
@@ -1235,12 +1344,33 @@ def create_app(backend, access_key):
     async def health(request):
         return web.json_response({'version': VERSION})
 
+    async def recording_file(request):
+        name = request.match_info['name']
+        if not re.fullmatch(r'\d{8}-\d{6}-[a-f0-9]{8}\.wav', name):
+            raise web.HTTPNotFound()
+        recorder = backend.modules.studio.recorder
+        if name == recorder.name and recorder.thread and recorder.thread.is_alive():
+            raise web.HTTPConflict(text='Arrête l’enregistrement avant de le télécharger.')
+        path = recorder.directory / name
+        if not path.is_file() or path.is_symlink():
+            raise web.HTTPNotFound()
+        return web.FileResponse(path, headers={'Content-Disposition': f'attachment; filename="{name}"'})
+
+    async def scene_file(request):
+        name = request.match_info['name']
+        scene = backend.state.data.get('scenes', {}).get(name)
+        if scene is None:
+            raise web.HTTPNotFound()
+        return web.json_response(scene, headers={'Content-Disposition': 'attachment; filename="bureau-audio-scene.json"'})
+
     app.router.add_get('/', index)
     app.router.add_get('/health', health)
     app.router.add_post('/api/login', login)
     app.router.add_get('/api/status', status)
     app.router.add_get('/api/levels', levels)
-    app.router.add_post('/api/{section:master|equalizer|pairing|device|radio|source|configuration}', action)
+    app.router.add_get('/api/recordings/{name}', recording_file)
+    app.router.add_get('/api/scenes/{name}', scene_file)
+    app.router.add_post('/api/{section:master|equalizer|studio|pairing|device|radio|source|configuration}', action)
     app.router.add_static('/static/', ROOT / 'static', show_index=False)
 
     async def lifecycle(app):
